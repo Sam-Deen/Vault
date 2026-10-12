@@ -16,6 +16,7 @@ import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -27,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"debug=false", "logging.level.root=INFO"})
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class VaultIntegrationTest {
     @Container
     static final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17.11-alpine");
