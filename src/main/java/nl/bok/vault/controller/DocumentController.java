@@ -1,6 +1,7 @@
 package nl.bok.vault.controller;
 
 import nl.bok.vault.dto.DocumentSummary;
+import nl.bok.vault.dto.DocumentResponse;
 import nl.bok.vault.service.DocumentService;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
@@ -13,4 +14,7 @@ public class DocumentController {
 
     @GetMapping
     public List<DocumentSummary> list() { return documents.listAccessible(); }
+
+    @GetMapping("/{id}")
+    public DocumentResponse get(@PathVariable Long id) { return documents.getById(id); }
 }
