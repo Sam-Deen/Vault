@@ -22,4 +22,15 @@ public class DocumentAuthorization {
     public boolean sameOrganization(VaultUser user, Document document) {
         return user.getOrganization().getId().equals(document.getOrganization().getId());
     }
+
+    public void requireManagement(VaultUser user, Document document) {
+        boolean canManage = sameOrganization(user, document)
+                && (user.getRole() == Role.WORKSPACE_MANAGER
+                || document.getOwner().getId().equals(user.getId())
+                || permissions.findByDocumentIdAndUserId(document.getId(), user.getId())
+                        .map(permission -> permission.getPermission() == Permission.MANAGE).orElse(false));
+        if (!canManage) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Document management permission required");
+        }
+    }
 }
