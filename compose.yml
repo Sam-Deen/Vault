@@ -1,0 +1,36 @@
+name: vault
+services:
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: vault
+      POSTGRES_USER: ${DB_USERNAME:-vault}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-vault-local-demo}
+    volumes:
+      - vault-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  app:
+    build: .
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/vault
+      DB_USERNAME: ${DB_USERNAME:-vault}
+      DB_PASSWORD: ${DB_PASSWORD:-vault-local-demo}
+      SERVER_ADDRESS: 0.0.0.0
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 60s
+volumes:
+  vault-data:
