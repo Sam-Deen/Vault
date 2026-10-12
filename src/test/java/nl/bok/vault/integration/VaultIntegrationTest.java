@@ -192,7 +192,8 @@ class VaultIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"{}", "{\"userId\":1}", "{\"permission\":\"READ\"}",
             "{\"userId\":0,\"permission\":\"READ\"}", "{\"userId\":-1,\"permission\":\"READ\"}",
-            "{\"userId\":1,\"permission\":\"OWNER\"}", "{\"userId\":1,\"permission\":null}", "{"})
+            "{\"userId\":1,\"permission\":\"OWNER\"}", "{\"userId\":1,\"permission\":null}",
+            "{\"userId\":1,\"permission\":0}", "{\"userId\":1,\"permission\":2}", "{"})
     void invalidPayload_isRejected(String payload) {
         assertThat(put("alice", 2, payload).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(storedPermissionCount(2, 1)).isZero();

@@ -1,6 +1,9 @@
 spring:
   application:
     name: vault
+  jackson:
+    deserialization:
+      fail-on-numbers-for-enums: true
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/vault}
     username: ${DB_USERNAME:vault}
