@@ -1,106 +1,39 @@
-# Vault: authorization misuse cases
+# Vault: secured authorization experiments
 
-**Vault is deliberately vulnerable. Run it only locally. Never expose it to the public internet or use its demonstration credentials in production.**
+Vault is a local Spring Boot document collaboration prototype for a Security Engineering Body of Knowledge project. The implementation on `main` prevents MC1 (unauthorized document retrieval) and MC2 (unauthorized permission modification). The vulnerable baseline remains preserved in Git. Original evidence and secured instructions are in [SECURITY_EXPERIMENTS.md](SECURITY_EXPERIMENTS.md).
 
-## Project overview
+## Start and test
 
-Vault represents a multitenant document collaboration platform. This prototype supports a Security Engineering Body of Knowledge project: demonstrate two misuse cases, collect evidence, and later repeat the attacks after adding controls. This repository contains the vulnerable baseline only.
-
-The stack is Java 21, Spring Boot 3.5.16, Maven, Spring Security, Spring Data JPA, PostgreSQL 17.11, JUnit 5 and Testcontainers 2.0.5. Dependencies follow Spring Boot's dependency management, with an explicit Testcontainers BOM. Versions were checked against [Spring Boot documentation](https://docs.spring.io/spring-boot/3.5/reference/index.html), [Testcontainers documentation](https://java.testcontainers.org/) and [PostgreSQL release notes](https://www.postgresql.org/docs/17/release.html).
-
-Each organization has one workspace. HTTP Basic replaces OIDC/MFA, BCrypt hashes protect stored passwords, and document text is stored in PostgreSQL. There is no frontend, object storage, document versioning, external sharing, encryption/KMS, malware scanning or PostgreSQL row level security. These simplifications do not represent the intended production design.
-
-| Misuse case | Endpoint | Missing check |
-| --- | --- | --- |
-| MC1: cross tenant document access | `GET /api/documents/{id}` | Requester tenant and document access permission |
-| MC2: unauthorized permission modification | `PUT /api/documents/{id}/permissions` | Requester document management authorization |
-
-Authentication remains required. Document listing and permission reading enforce authorization. MC2 retains both requester and recipient tenant boundaries so the flaw concerns unauthorized management within one organization.
-
-## Setup and execution
-
-### Docker Compose
-
-Install Docker with Compose v2 and start its engine. Java and Maven are not required on the host to start the application. From this repository:
-
-```sh
-docker compose up --build
-```
-
-To start in the background and wait for health checks:
+Start Docker Desktop, then run from this directory:
 
 ```sh
 docker compose up --build -d --wait
 docker compose ps
+curl -i http://127.0.0.1:8080/api/health
 ```
 
-The API is available at `http://127.0.0.1:8080`. Only the application port is published, bound to `127.0.0.1`. PostgreSQL is reachable only inside the Compose network. The application waits for PostgreSQL to become healthy, creates/updates the schema, and seeds fictional data automatically. Its container runs as an unprivileged user. The first build downloads dependencies and images; no cloud services are required.
+On Windows PowerShell use `curl.exe`. The API listens on `http://127.0.0.1:8080`; PostgreSQL has no published port. The `migrate` container applies Flyway migrations and exits successfully before `app` starts. The app receives only restricted database credentials; its environment contains no migration password.
 
-Optionally copy `.env.example` to `.env` and customize local values. Git ignores `.env`; all defaults are demonstration values.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DB_USERNAME` | `vault` | Database account |
-| `DB_PASSWORD` | `vault-local-demo` | Local database password |
-| `API_PORT` | `8080` | Compose host port |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/vault` | Direct Java execution; Compose supplies `jdbc:postgresql://db:5432/vault` |
-| `SERVER_ADDRESS` | `127.0.0.1` | Direct Java bind address; Compose binds inside the container and publishes only on host loopback |
-| `SERVER_PORT` | `8080` | Internal port; keep the default in Compose |
-
-The `.env` file supplies Compose settings; direct Java/Maven execution reads environment variables instead. Changing `DB_PASSWORD` does not change the database account in an existing volume. Keep credentials consistent or reset the demonstration database.
-
-Inspect logs and stop containers while retaining data:
+Run the complete build and tests with Java 21 or newer, Maven and a running Docker engine:
 
 ```sh
-docker compose logs app db
+mvn -B -ntp verify
+```
+
+Tests use disposable PostgreSQL containers, restricted runtime connections for HTTP/RLS, and administrator connections for fixture reset and committed-state assertions. Independent application tests use an unfiltered repository. Migration tests verify preservation of an existing schema, content and grants.
+
+```sh
+docker compose logs app migrate db
+docker compose restart app
+docker compose up -d --wait
 docker compose down
 ```
 
-Restart the application while preserving experiment changes:
+`down` preserves data. To intentionally erase **all local demonstration data**, use `docker compose down -v`, then the start command. Do not reset data you need to keep.
 
-```sh
-docker compose restart app
-docker compose up -d --wait
-```
+## Accounts and fixtures
 
-Reset **all local Vault database data**, including experiment changes, to the initial fixtures:
-
-```sh
-docker compose down -v
-docker compose up --build -d --wait
-```
-
-The `vault-data` volume normally persists across container recreation. Seeding uses fixed organization, user and document IDs, inserts missing fixtures and leaves existing permissions unchanged. Permission row IDs are generated and should not be used as experiment identifiers.
-
-### Maven build and automated tests
-
-Install Java 21 and Maven 3.9.x. Tests also require a running Docker engine: the suite starts its own PostgreSQL container and real HTTP server. It does not change the Compose database.
-
-```sh
-mvn verify
-```
-
-This builds the application, runs the integration suite and creates `target/vault-0.0.1-SNAPSHOT.jar`. Results are in `target/surefire-reports`. Every test invocation resets its fixtures, including parameterized cases. Both vulnerability tests deliberately assert successful unauthorized operations.
-
-Build the runnable JAR without executing tests:
-
-```sh
-mvn -DskipTests package
-```
-
-For direct execution, provide a reachable PostgreSQL database, set `DB_URL`, `DB_USERNAME` and `DB_PASSWORD`, then run:
-
-```sh
-java -jar target/vault-0.0.1-SNAPSHOT.jar
-```
-
-The Compose database has no published host port, so direct host Java execution needs a separately reachable PostgreSQL database. Compose is the simplest complete setup.
-
-## Demonstration data
-
-All organizations, users and contents are fictional. Organization `1` is Organization A; organization `2` is Organization B.
-
-| User ID | Username | Demonstration password | Organization | Role |
+| ID | Username | Password | Organization | Role |
 | --- | --- | --- | --- | --- |
 | 1 | alice | alice-demo | A (1) | EMPLOYEE |
 | 2 | bob | bob-demo | A (1) | WORKSPACE_MANAGER |
@@ -108,152 +41,60 @@ All organizations, users and contents are fictional. Organization `1` is Organiz
 | 4 | charlie | charlie-demo | B (2) | EMPLOYEE |
 | 5 | diana | diana-demo | B (2) | WORKSPACE_MANAGER |
 
-Only BCrypt hashes are stored. Protected requests require HTTP Basic credentials; missing or invalid credentials return `401` with a Basic challenge.
+Documents 1/2 belong to A and are owned by Alice/Bob; documents 3/4 belong to B and are owned by Charlie/Diana. Fresh fixtures contain 2 organizations, 5 users, 4 documents and 6 permissions: owners have MANAGE, Bob has MANAGE on document 1, and Diana has MANAGE on document 3. Alice has no document 2 permission. Passwords are BCrypt hashes. Migration preserves existing rows; seeding runs once under the migration account.
 
-| Document ID | Filename | Organization | Owner | Initial permissions |
-| --- | --- | --- | --- | --- |
-| 1 | alice-notes.txt | A | alice (1) | alice: MANAGE; bob: MANAGE |
-| 2 | bob-confidential.txt | A | bob (2) | bob: MANAGE |
-| 3 | charlie-confidential.txt | B | charlie (4) | charlie: MANAGE; diana: MANAGE |
-| 4 | diana-project.txt | B | diana (5) | diana: MANAGE |
+## API
 
-Alice initially has no permission for Document 2 and no legitimate access to Document 3. Document 3 contains:
+All document endpoints require stateless HTTP Basic. Missing/invalid credentials return `401`. URLs, methods, JSON payloads and successful DTOs remain unchanged.
 
-```text
-CONFIDENTIAL: Organization B document owned by Charlie. Organization A has no access.
-```
+| Endpoint | Policy |
+| --- | --- |
+| `GET /api/health` | Public `200`, `{"status":"UP"}` |
+| `GET /api/documents` | `200`, readable documents in the authenticated user's organization |
+| `GET /api/documents/{id}` | Owner, explicit READ/WRITE/MANAGE or own organization's workspace manager; otherwise `404` |
+| `GET /api/documents/{id}/permissions` | Owner, explicit MANAGE or own organization's workspace manager; otherwise `403` |
+| `PUT /api/documents/{id}/permissions` | Same management policy and same-organization recipient; otherwise `403` |
 
-`READ` permits reading, `WRITE` implies reading, and `MANAGE` implies reading/writing plus permission management. Owners receive persistent MANAGE permissions when their fixtures are created and can manage their own documents. Workspace managers can read/manage documents in their own organization's workspace. Organization administrators receive no automatic access: they need ownership or explicit permissions. No document-content write endpoint is included.
-
-## API documentation
-
-Examples assume the default port and fresh fixtures. In Windows PowerShell use `curl.exe` because `curl` may be an alias. Each command is one line; PUT reads a file to avoid shell-specific JSON quoting. In Postman select Basic Auth, use the same credentials, and supply a raw JSON body for PUT. These curl commands can also be imported.
-
-### GET /api/health
-
-Public process health check, returning `200 OK`:
-
-```sh
-curl -i http://127.0.0.1:8080/api/health
-```
-
-```json
-{"status":"UP"}
-```
-
-This simple response is not a comprehensive dependency readiness check.
-
-### GET /api/documents
-
-Returns authorized document metadata within the authenticated user's organization, ordered by ID. Content is omitted.
-
-```sh
-curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents
-```
-
-`200 OK` on fresh fixtures:
-
-```json
-[{"id":1,"organizationId":1,"ownerId":1,"filename":"alice-notes.txt","createdAt":"2026-01-01T12:00:00Z"}]
-```
-
-`adminA` receives `[]`. Bob receives Documents 1 and 2; Diana receives Documents 3 and 4.
-
-### GET /api/documents/{id}
-
-Returns metadata and text. **MC1: any authenticated user can retrieve any existing document by ID.** Unknown IDs return `404`.
+Administrators receive no automatic document access. Document GET consistently returns `404` for missing and unauthorized targets without document metadata/content. Permission endpoints return `403` for missing, invisible and unauthorized targets to avoid distinguishing existence.
 
 ```sh
 curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/1
-```
-
-`200 OK`:
-
-```json
-{"id":1,"organizationId":1,"ownerId":1,"filename":"alice-notes.txt","content":"Alice's private notes from Organization A.","createdAt":"2026-01-01T12:00:00Z"}
-```
-
-### GET /api/documents/{id}/permissions
-
-Requires ownership, explicit MANAGE, or the workspace-manager role in the document's organization. Tenant membership is always checked. Returns an array ordered by user ID; unauthorized authenticated users receive `403`, and unknown documents receive `404`.
-
-```sh
-curl -i -u bob:bob-demo http://127.0.0.1:8080/api/documents/2/permissions
-```
-
-`200 OK` on fresh fixtures; permission row IDs are illustrative:
-
-```json
-[{"id":2,"documentId":2,"userId":2,"permission":"MANAGE"}]
-```
-
-Alice's equivalent request initially returns `403`:
-
-```json
-{"type":"about:blank","title":"Forbidden","status":403,"detail":"Document management permission required","instance":"/api/documents/2/permissions"}
-```
-
-### PUT /api/documents/{id}/permissions
-
-Creates or updates the unique permission for a document/user pair. Requires authentication, an existing document and recipient, and matching organizations for both requester and recipient. **MC2: it omits the requester's management authorization check.**
-
-The included `examples/grant-alice-manage.json` contains:
-
-```json
-{"userId":1,"permission":"MANAGE"}
-```
-
-```sh
+curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/3
 curl -i -u alice:alice-demo -X PUT -H "Content-Type: application/json" --data-binary '@examples/grant-alice-manage.json' http://127.0.0.1:8080/api/documents/2/permissions
 ```
 
-`200 OK` after the unauthorized grant; row ID is illustrative:
+Expected on clean fixtures: `200`, `404`, `403`. The unchanged attack body is `{"userId":1,"permission":"MANAGE"}`. Bob can submit it successfully because he owns/manages document 2. That grant authorizes Alice; remove it explicitly before repeating the unauthorized experiment.
 
-```json
-{"id":7,"documentId":2,"userId":1,"permission":"MANAGE"}
-```
+Allowed permissions: READ, WRITE, MANAGE. Missing/null fields, nonpositive IDs, numeric/unknown enums or malformed JSON return `400`; non-JSON PUT returns `415`. After management authorization, foreign recipients return `400`, missing recipients `404`, and conflicting inserts `409`.
 
-Supported values are `READ`, `WRITE` and `MANAGE`. Invalid/missing/null required fields, nonpositive user IDs or malformed JSON return `400`. Cross-organization recipients return `400`; cross-organization requesters return `403`. Unknown documents/users return `404`. Non-JSON mutations return `415`; conflicting concurrent inserts return `409`. Validation and application errors use problem-detail responses without SQL or stack traces.
+## Database configuration and upgrades
 
-The API uses stateless Basic authentication, accepts mutations only through JSON PUT, and does not enable CORS or HTML forms. It creates no authenticated session and uses no cookie credentials.
+Copy `.env.example` to `.env` if needed. Defaults are fictional local credentials.
 
-## MC1 reproduction
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MIGRATION_USERNAME` | vault | PostgreSQL administrator/migration account |
+| `MIGRATION_PASSWORD` | vault-local-demo | Original administrator password |
+| `DB_PASSWORD` | vault-app-local-demo | Restricted vault_app runtime password |
+| `API_PORT` | 8080 | Compose host port |
+| `DB_URL` | jdbc:postgresql://localhost:5432/vault | Direct Java connection; Compose supplies its internal URL |
+| `DB_USERNAME` | vault_app | Direct Java runtime account; fixed in Compose |
+| `FLYWAY_ENABLED` | true | Direct Java migrations; disabled in Compose app |
+| `SERVER_ADDRESS` | 127.0.0.1 | Direct Java bind address |
+| `SERVER_PORT` | 8080 | Internal API port |
 
-1. Start Vault with fresh fixtures. Authenticate as Alice using `-u alice:alice-demo` on each request.
-2. Retrieve her authorized document: `curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/1`. Expect `200` and her notes.
-3. List documents: `curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents`. Expect only Document 1; Organization B documents are absent.
-4. Change the identifier: `curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/3`. Expect `200`, `organizationId: 2`, and Charlie's confidential text.
-5. Capture the request, status and body. `DocumentService.getById` retrieves the document directly without checking tenant membership or permissions. This omission also exposes same-organization documents such as Document 2.
+For existing volumes, set migration variables to the original PostgreSQL credentials. Move an old `.env` administrator `DB_USERNAME`/`DB_PASSWORD` into `MIGRATION_USERNAME`/`MIGRATION_PASSWORD` and choose a separate runtime password. The runtime role is fixed to `vault_app`. Changing an environment variable does not rotate an existing role password: use administrator-controlled `ALTER ROLE` and update its runtime secret together.
 
-The test `mc1_crossTenantDocumentAccess_isVulnerable` verifies this successful attack.
+Flyway baselines existing nonempty schemas at version **0** and then runs V1–V4. V1 creates missing baseline tables; V2 seeds missing fixtures; V3 provisions runtime; V4 enables/forces tenant RLS. Hibernate only validates. Migration requires role-creation rights and ownership of existing tables (the original Compose account has these). Incompatible custom schemas fail validation; back up and inspect instead of deleting data.
 
-## MC2 reproduction
+Direct `mvn spring-boot:run` uses separate Flyway and runtime connections in one local process. Production should migrate separately and run with `FLYWAY_ENABLED=false`, keeping migration secrets outside runtime as Compose does.
 
-1. Start with fresh fixtures; reset the database if this experiment has already been run. Authenticate as Alice for attack requests.
-2. Run `curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/2/permissions`. Expect `403`. Bob's permission GET initially shows only his MANAGE entry.
-3. Execute the PUT command above with `examples/grant-alice-manage.json`. Expect `200` and MANAGE for user 1 on Document 2.
-4. Repeat Alice's permission GET. Expect `200` with Alice and Bob assigned MANAGE. Her document listing now includes Document 2.
-5. Verify the committed row directly:
+## Security controls and limitations
 
-   ```sh
-   docker compose exec -T db psql -U vault -d vault -c "SELECT document_id, user_id, permission FROM document_permissions WHERE document_id = 2 AND user_id = 1;"
-   ```
+`CurrentUser.get` resolves the organization from authenticated identity and trusted database records, then sets a bound transaction-local `vault.organization_id` through JPA. Client tenant identifiers are never used. Document/permission RLS fails closed without context; permission writes also check recipient organization. RLS enforces tenant isolation; `DocumentAuthorization` enforces individual read/management rules. See [PostgreSQL RLS documentation](https://www.postgresql.org/docs/17/ddl-rowsecurity.html).
 
-   Expect `2 | 1 | MANAGE`. Replace the database username after `-U` if you customized it.
+`vault_app` has no table ownership, superuser/BYPASSRLS, role creation, schema CREATE or TRUNCATE. `RuntimeDatabaseGuard` rejects unsafe configuration. User/organization tables remain readable for authentication/identity resolution but are not writable by runtime. Runtime may read documents and insert/update permissions within RLS scope.
 
-6. Restart the app using the setup commands and repeat Alice's permission GET. The grant persists; seeding leaves it intact.
-7. Capture the original `403`, successful PUT, subsequent `200` and SQL row. `PermissionService.update` checks tenant boundaries and validates input but never calls `DocumentAuthorization.requireManagement`.
+Structured `vault.security.audit` logs contain timestamp, user ID, operation, document ID, result and reason. Denied reads and unauthorized updates survive rollback; successful changes log after commit. Credentials, headers and document contents are excluded.
 
-The test `mc2_unauthorizedPermissionModification_isVulnerable` verifies the initial denial, successful grant, committed SQL row and resulting management access. [SECURITY_EXPERIMENTS.md](SECURITY_EXPERIMENTS.md) records both experiments and planned next-phase controls.
-
-## Security warning
-
-This intentionally vulnerable application is for local educational security testing only. It must not be exposed to the public internet. All demonstration credentials, including the database password, must never be used in production. MC1 and MC2 remain deliberate vulnerabilities for this phase.
-
-## Source layout and verification
-
-Code under `src/main/java/nl/bok/vault` is separated into `controller`, `service`, `repository`, `entity`, `dto`, `security` and `config`. DTOs avoid exposing entity internals or password hashes. Hibernate creates/updates the prototype schema, including foreign keys and a unique document/user permission constraint. Production schema migration tooling is outside this prototype.
-
-Tests are in `src/test/java/nl/bok/vault/integration/VaultIntegrationTest.java`. Both deliberate flaws are marked in `DocumentService.getById` and `PermissionService.update`. No MC1/MC2 mitigation or row level security policy has been implemented.
-
-Implementation verification passed Maven builds and all 40 integration cases. Docker Compose started healthy services. Live requests reproduced MC1/MC2, SQL confirmed fixture counts and permission persistence, and an application restart preserved the unauthorized grant. The verification grant was removed afterward to restore the initial six-permission demonstration state. See the experiment document for observed results.
+HTTP Basic substitutes for intended production OIDC/MFA. Use fictional data locally. Production requires TLS, managed secrets, durable audit collection/retention, rate limits and stronger operational controls. One organization represents one workspace. Arbitrary SQL execution or compromised runtime credentials can change the custom tenant setting; RLS guards omitted predicates, not full application compromise. Global authentication records are outside document RLS. External sharing, malware scanning, object storage, versioning and encryption/KMS are not implemented.
