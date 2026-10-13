@@ -4,8 +4,8 @@ services:
     image: postgres:17.11-alpine
     environment:
       POSTGRES_DB: vault
-      POSTGRES_USER: ${DB_USERNAME:-vault}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-vault-local-demo}
+      POSTGRES_USER: ${MIGRATION_USERNAME:-vault}
+      POSTGRES_PASSWORD: ${MIGRATION_PASSWORD:-vault-local-demo}
     volumes:
       - vault-data:/var/lib/postgresql/data
     healthcheck:
@@ -14,18 +14,30 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
+  migrate:
+    build: .
+    environment:
+      VAULT_MIGRATE_ONLY: "true"
+      DB_URL: jdbc:postgresql://db:5432/vault
+      MIGRATION_USERNAME: ${MIGRATION_USERNAME:-vault}
+      MIGRATION_PASSWORD: ${MIGRATION_PASSWORD:-vault-local-demo}
+      DB_PASSWORD: ${DB_PASSWORD:-vault-app-local-demo}
+    depends_on:
+      db:
+        condition: service_healthy
   app:
     build: .
     environment:
       DB_URL: jdbc:postgresql://db:5432/vault
-      DB_USERNAME: ${DB_USERNAME:-vault}
-      DB_PASSWORD: ${DB_PASSWORD:-vault-local-demo}
+      DB_USERNAME: vault_app
+      DB_PASSWORD: ${DB_PASSWORD:-vault-app-local-demo}
+      FLYWAY_ENABLED: "false"
       SERVER_ADDRESS: 0.0.0.0
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s

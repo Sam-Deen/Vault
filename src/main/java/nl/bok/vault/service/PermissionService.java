@@ -21,38 +21,52 @@ public class PermissionService {
     private final CurrentUser currentUser;
     private final DocumentAuthorization authorization;
     private final UserRepository users;
+    private final SecurityAudit audit;
 
     public PermissionService(DocumentRepository documents, DocumentPermissionRepository permissions,
-                             CurrentUser currentUser, DocumentAuthorization authorization, UserRepository users) {
+                             CurrentUser currentUser, DocumentAuthorization authorization, UserRepository users, SecurityAudit audit) {
         this.documents = documents; this.permissions = permissions;
         this.currentUser = currentUser; this.authorization = authorization;
-        this.users = users;
+        this.users = users; this.audit = audit;
     }
 
     public List<PermissionResponse> list(Long documentId) {
+        var user = currentUser.get();
         var document = documents.findById(documentId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
-        authorization.requireManagement(currentUser.get(), document);
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Document management permission required"));
+        authorization.requireManagement(user, document);
         return permissions.findByDocumentIdOrderByUserId(documentId).stream().map(PermissionResponse::from).toList();
     }
 
     @Transactional
     public PermissionResponse update(Long documentId, PermissionRequest request) {
-        var document = documents.findById(documentId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
-        // Retain the requester tenant boundary to avoid a separate cross-tenant write flaw.
-        if (!authorization.sameOrganization(currentUser.get(), document)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Document belongs to another organization");
+        var user = currentUser.get();
+        var document = documents.findById(documentId).orElse(null);
+        try {
+            if (document == null) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Document management permission required");
+            }
+            authorization.requireManagement(user, document);
+        } catch (ResponseStatusException denied) {
+            audit.record(user, "PERMISSION_UPDATE", documentId, "denied", "management_not_authorized");
+            throw denied;
         }
         var target = users.findById(request.userId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Target user not found"));
         if (!authorization.sameOrganization(target, document)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Target user belongs to another organization");
         }
-        // VULNERABILITY MC2: Missing authorization check for permission management.
         var permission = permissions.findByDocumentIdAndUserId(documentId, target.getId())
                 .orElseGet(() -> new DocumentPermission(document, target, request.permission()));
         permission.setPermission(request.permission());
-        return PermissionResponse.from(permissions.saveAndFlush(permission));
+        var response = PermissionResponse.from(permissions.saveAndFlush(permission));
+        // Emit success only after the transaction actually commits.
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() {
+                        audit.record(user, "PERMISSION_UPDATE", documentId, "allowed", "authorized");
+                    }
+                });
+        return response;
     }
 }

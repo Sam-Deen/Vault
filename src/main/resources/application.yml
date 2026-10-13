@@ -6,15 +6,27 @@ spring:
       fail-on-numbers-for-enums: true
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/vault}
-    username: ${DB_USERNAME:vault}
-    password: ${DB_PASSWORD:vault-local-demo}
+    username: ${DB_USERNAME:vault_app}
+    password: ${DB_PASSWORD:vault-app-local-demo}
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/vault}
+    user: ${MIGRATION_USERNAME:vault}
+    password: ${MIGRATION_PASSWORD:vault-local-demo}
+    baseline-on-migrate: true
+    baseline-version: 0
+    placeholders:
+      runtimePassword: ${DB_PASSWORD:vault-app-local-demo}
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
 server:
   address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
   error:
     include-message: never
     include-stacktrace: never
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level %logger{36} %kvp{NONE} - %msg%n"
