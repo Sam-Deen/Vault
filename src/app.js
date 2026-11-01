@@ -28,13 +28,27 @@ export function createApp(db) {
   app.get('/api/documents/:id/permissions', (req, res) => {
     res.json(permissions.list(req.user, req.documentId));
   });
+  app.put('/api/documents/:id/permissions', (req, res, next) => {
+    if (!req.is('application/json')) return next(new HttpError(415, 'Content-Type must be application/json'));
+    next();
+  }, express.json(), (req, res) => {
+    const { userId, permission } = req.body ?? {};
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !['READ', 'WRITE', 'MANAGE'].includes(permission)) {
+      throw new HttpError(400, 'A positive userId and READ, WRITE or MANAGE permission are required');
+    }
+    res.json(permissions.update(req.user, req.documentId, { userId, permission }));
+  });
   app.use((req, res, next) => next(new HttpError(404, 'Not found')));
   app.use((error, req, res, next) => {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof HttpError ? error.status
+      : error.type === 'entity.parse.failed' ? 400
+      : error.type === 'entity.too.large' ? 413
+      : error.status === 415 ? 415 : 500;
     if (status === 500) console.error(error);
     res.status(status).type('application/problem+json').json({
       type: 'about:blank', title: STATUS_CODES[status], status,
-      detail: status === 500 ? 'Internal server error' : error.message,
+      detail: status === 500 ? 'Internal server error'
+        : error.type === 'entity.parse.failed' ? 'Malformed JSON' : error.message,
       instance: req.path,
     });
   });
