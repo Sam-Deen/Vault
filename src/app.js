@@ -5,12 +5,14 @@ import { authenticate } from './authentication.js';
 import { HttpError } from './http-error.js';
 import { DocumentAuthorization } from './services/document-authorization.js';
 import { DocumentService } from './services/document-service.js';
+import { PermissionService } from './services/permission-service.js';
 
 export function createApp(db) {
   const app = express();
   const repository = new VaultRepository(db);
   const authorization = new DocumentAuthorization(repository);
   const documents = new DocumentService(repository, authorization);
+  const permissions = new PermissionService(repository, authorization);
   app.disable('x-powered-by');
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   app.use(authenticate(repository));
@@ -23,6 +25,9 @@ export function createApp(db) {
   });
   app.get('/api/documents', (req, res) => res.json(documents.list(req.user)));
   app.get('/api/documents/:id', (req, res) => res.json(documents.get(req.user, req.documentId)));
+  app.get('/api/documents/:id/permissions', (req, res) => {
+    res.json(permissions.list(req.user, req.documentId));
+  });
   app.use((req, res, next) => next(new HttpError(404, 'Not found')));
   app.use((error, req, res, next) => {
     const status = error instanceof HttpError ? error.status : 500;
