@@ -1,7 +1,7 @@
 # Vault
 
-A small Node.js document API for a school security project. This snapshot deliberately
-contains two authorization vulnerabilities. Use fictional data and run it locally.
+A small Node.js document API for a school security project. This revision fixes
+MC1; MC2 remains deliberately vulnerable. Use fictional data and run it locally.
 
 The API uses [Express](https://expressjs.com/en/5x/api/), Node's built-in
 [SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), scrypt password hashing,
@@ -25,7 +25,7 @@ npm test
 ```
 
 Tests start real HTTP servers with isolated databases. They cover the API contract,
-legitimate access, validation, persistence, and both successful attacks.
+legitimate access, validation, persistence, the MC1 fix, and the successful MC2 attack.
 
 Docker is optional:
 
@@ -103,9 +103,10 @@ curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/1
 curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/3
 ```
 
-Both return `200` here. The second leaks Charlie's confidential Organization B
-document. Same-organization document 2 is also exposed. `DocumentService.get`
-looks up the ID without checking `DocumentAuthorization.canRead`.
+On `Vulnerable-Vault`, both return `200`: the second leaks Charlie's confidential
+Organization B document, and document 2 is also exposed. This revision returns
+`200` then `404`. The fix calls the existing `DocumentAuthorization.canRead`
+inside `DocumentService.get` before returning any content.
 
 MC2: grant Alice management rights on Bob's document:
 
