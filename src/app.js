@@ -14,7 +14,15 @@ export function createApp(db) {
   app.disable('x-powered-by');
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   app.use(authenticate(repository));
+  app.param('id', (req, res, next, value) => {
+    if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      return next(new HttpError(400, 'Document ID must be an integer'));
+    }
+    req.documentId = Number(value);
+    next();
+  });
   app.get('/api/documents', (req, res) => res.json(documents.list(req.user)));
+  app.get('/api/documents/:id', (req, res) => res.json(documents.get(req.user, req.documentId)));
   app.use((req, res, next) => next(new HttpError(404, 'Not found')));
   app.use((error, req, res, next) => {
     const status = error instanceof HttpError ? error.status : 500;
