@@ -1,0 +1,15 @@
+name: vault
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    volumes:
+      - vault-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  vault-data:
