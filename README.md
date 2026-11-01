@@ -1,7 +1,8 @@
 # Vault
 
-A small Node.js document API for a school security project. This revision fixes
-MC1; MC2 remains deliberately vulnerable. Use fictional data and run it locally.
+A small Node.js document API for a school security project. `main` and
+`Secured-Vault` fix two authorization vulnerabilities; `Vulnerable-Vault` preserves
+both attacks. Use fictional data and run it locally.
 
 The API uses [Express](https://expressjs.com/en/5x/api/), Node's built-in
 [SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), scrypt password hashing,
@@ -25,7 +26,8 @@ npm test
 ```
 
 Tests start real HTTP servers with isolated databases. They cover the API contract,
-legitimate access, validation, persistence, the MC1 fix, and the successful MC2 attack.
+legitimate access, validation, persistence, and both attack regressions. On the
+vulnerable snapshot, its tests deliberately assert successful attacks instead.
 
 Docker is optional:
 
@@ -89,7 +91,9 @@ PUT accepts `{"userId":1,"permission":"MANAGE"}`; allowed values are READ, WRITE
 Missing/invalid credentials return `401` with a Basic challenge. Invalid JSON, IDs,
 or permission values return `400`; non-JSON PUT returns `415`. Foreign recipients
 return `400`, missing recipients `404`, and unauthorized management `403`.
-Unknown documents return `404`. Errors use `application/problem+json` with
+Document GET returns `404` for unknown or unauthorized IDs. Permission GET/PUT
+returns `403` for unknown or unauthorized documents; on `Vulnerable-Vault`, unknown
+documents return `404`. Errors use `application/problem+json` with
 `type`, `title`, `status`, `detail`, and `instance`; SQL and stack traces stay out of responses.
 
 ## The two experiments
@@ -116,9 +120,11 @@ curl -i -u alice:alice-demo -X PUT -H "Content-Type: application/json" --data-bi
 curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/2/permissions
 ```
 
-The statuses are `403`, `200`, `200`. The grant persists and Alice's document list
-now includes document 2. `PermissionService.update` checks both organization
-boundaries but omits `DocumentAuthorization.requireManagement`.
+On `Vulnerable-Vault`, the statuses are `403`, `200`, `200`. The grant persists and
+Alice's document list includes document 2. On `main` and `Secured-Vault`, all three
+return `403`; no grant is written. The fix calls the existing
+`DocumentAuthorization.requireManagement` before looking up the recipient or
+saving the grant. Permission reads use the same guard for missing documents too.
 
 Authentication, document listing, and permission reading stay protected. SQL uses
 bound parameters throughout; SQL injection is not one of these two experiments.
@@ -130,7 +136,7 @@ identity. `src/services/` holds the document and permission rules, with one shar
 authorization class. `src/repository.js` owns SQL; `src/database.js` creates and seeds
 SQLite. Services receive their dependencies through constructors.
 
-`Vulnerable-Vault` preserves this baseline. Subsequent commits on `main` fix each
-missing check in place; `Secured-Vault` preserves the final version. Both use the
+`Vulnerable-Vault` preserves the vulnerable baseline. Two subsequent commits on
+`main` fix each missing check in place; `Secured-Vault` preserves the final version. Both use the
 same dependencies, schema, routes, and services. No branch-dependent runtime flag
 or alternate application is needed.
