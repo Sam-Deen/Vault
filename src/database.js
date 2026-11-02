@@ -27,6 +27,9 @@ export function openDatabase(path = 'data/vault.sqlite') {
       UNIQUE(documentId, userId)
     );
   `);
+  const columns = db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
+  if (!columns.includes('totpSecret')) db.exec('ALTER TABLE users ADD COLUMN totpSecret TEXT');
+  if (!columns.includes('pendingTotpSecret')) db.exec('ALTER TABLE users ADD COLUMN pendingTotpSecret TEXT');
   seed(db);
   return db;
 }
@@ -44,7 +47,7 @@ function seed(db) {
     ];
     for (const [id, username, organizationId, role] of users) {
       if (!db.prepare('SELECT id FROM users WHERE id = ?').get(id)) {
-        db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?)')
+        db.prepare('INSERT INTO users (id, username, passwordHash, organizationId, role) VALUES (?, ?, ?, ?, ?)')
           .run(id, username, hashPassword(`${username}-demo`), organizationId, role);
       }
     }
