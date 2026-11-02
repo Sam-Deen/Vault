@@ -48,5 +48,9 @@ export function createAuthentication(repository) {
       sessions.delete(req.auth.token);
       return { token: issue(req.auth.user.id, 'authenticated'), state: 'authenticated' };
     },
+    logout(req) {
+      const current = session(req);
+      sessions.delete(current.token);
+    },
   };
 }

@@ -39,6 +39,10 @@ export function createApp(db) {
     if (!user.totpSecret) repository.activateTotpSecret(user.id);
     res.set('Cache-Control', 'no-store').json(authentication.complete(req));
   });
+  app.post('/api/auth/logout', (req, res) => {
+    authentication.logout(req);
+    res.status(204).end();
+  });
   app.use(authentication.protected);
   app.param('id', (req, res, next, value) => {
     if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
