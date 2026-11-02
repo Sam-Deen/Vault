@@ -159,7 +159,7 @@ test('SQLite restart preserves grants and seed data without duplication', () => 
     assert.deepEqual(repository.findPermission(2, 1), saved);
     assert.equal(repository.findPermission(1, 2).permission, 'READ');
     assert.equal(repository.findUser(1).passwordHash, storedPassword);
-    for (const [table, count] of [['organizations', 2], ['users', 5], ['documents', 4], ['permissions', 7]]) {
+    for (const [table, count] of [['organizations', 2], ['users', 7], ['documents', 4], ['permissions', 7]]) {
       assert.equal(db.prepare(`SELECT count(*) AS count FROM ${table}`).get().count, count);
     }
   } finally {

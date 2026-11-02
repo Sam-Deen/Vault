@@ -44,11 +44,13 @@ function seed(db) {
       [3, 'adminA', 1, 'ORGANIZATION_ADMIN'],
       [4, 'charlie', 2, 'EMPLOYEE'],
       [5, 'diana', 2, 'WORKSPACE_MANAGER'],
+      [6, 'hashAlice', 1, 'EMPLOYEE', 'shared-demo'],
+      [7, 'hashBob', 1, 'EMPLOYEE', 'shared-demo'],
     ];
-    for (const [id, username, organizationId, role] of users) {
+    for (const [id, username, organizationId, role, password = `${username}-demo`] of users) {
       if (!db.prepare('SELECT id FROM users WHERE id = ?').get(id)) {
         db.prepare('INSERT INTO users (id, username, passwordHash, organizationId, role) VALUES (?, ?, ?, ?, ?)')
-          .run(id, username, hashPassword(`${username}-demo`), organizationId, role);
+          .run(id, username, hashPassword(password), organizationId, role);
       }
     }
     const documents = [
