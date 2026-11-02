@@ -1,7 +1,9 @@
 import express from 'express';
 import { STATUS_CODES } from 'node:http';
 import { VaultRepository } from './repository.js';
-import { authenticate } from './authentication.js';
+import { createAuthentication } from './authentication.js';
+import { generateTotpSecret, verifyTotp } from './totp.js';
+import QRCode from 'qrcode';
 import { HttpError } from './http-error.js';
 import { DocumentAuthorization } from './services/document-authorization.js';
 import { DocumentService } from './services/document-service.js';
@@ -13,9 +15,31 @@ export function createApp(db) {
   const authorization = new DocumentAuthorization(repository);
   const documents = new DocumentService(repository, authorization);
   const permissions = new PermissionService(repository, authorization);
+  const authentication = createAuthentication(repository);
   app.disable('x-powered-by');
+  app.use(express.static('public'));
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
-  app.use(authenticate(repository));
+  const json = express.json({ limit: '4kb' });
+  app.post('/api/auth/login', json, (req, res) => {
+    const { username, password } = req.body ?? {};
+    res.set('Cache-Control', 'no-store').json(authentication.login(username, password));
+  });
+  app.post('/api/auth/enroll', authentication.pending, async (req, res) => {
+    const user = req.auth.user;
+    if (user.totpSecret) throw new HttpError(409, 'TOTP already enrolled');
+    const secret = user.pendingTotpSecret ?? generateTotpSecret();
+    if (!user.pendingTotpSecret) repository.savePendingTotpSecret(user.id, secret);
+    const uri = `otpauth://totp/Vault:${encodeURIComponent(user.username)}?secret=${secret}&issuer=Vault&algorithm=SHA1&digits=6&period=30`;
+    res.set('Cache-Control', 'no-store').json({ secret, qrCode: await QRCode.toDataURL(uri) });
+  });
+  app.post('/api/auth/verify', authentication.pending, json, (req, res) => {
+    const user = req.auth.user;
+    const secret = user.totpSecret ?? user.pendingTotpSecret;
+    if (!secret || !verifyTotp(secret, req.body?.code)) throw new HttpError(401, 'Invalid TOTP code');
+    if (!user.totpSecret) repository.activateTotpSecret(user.id);
+    res.set('Cache-Control', 'no-store').json(authentication.complete(req));
+  });
+  app.use(authentication.protected);
   app.param('id', (req, res, next, value) => {
     if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
       return next(new HttpError(400, 'Document ID must be an integer'));
