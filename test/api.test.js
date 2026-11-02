@@ -21,18 +21,17 @@ test('health is public and returns the original response', async () => {
   assert.deepEqual(response.body, { status: 'UP' });
 });
 
-test('every document endpoint requires Basic authentication', async () => {
+test('every document endpoint requires a verified bearer session', async () => {
   for (const [method, path] of [
     ['GET', '/api/documents'], ['GET', '/api/documents/1'],
     ['GET', permissionPath], ['PUT', permissionPath],
   ]) {
     const response = await fixture.request(path, { user: null, method, ...(method === 'PUT' ? { body: grant() } : {}) });
     assert.equal(response.status, 401);
-    assert.match(response.headers.get('www-authenticate'), /^Basic/);
   }
 });
 
-test('invalid credentials and malformed Basic headers fail', async () => {
+test('invalid credentials and malformed authorization headers fail', async () => {
   for (const options of [
     { password: 'wrong' }, { user: 'missing' },
     { headers: { Authorization: 'Bearer alice' } },

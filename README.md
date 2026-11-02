@@ -6,7 +6,8 @@ both attacks. Use fictional data and run it locally.
 
 The API uses [Express](https://expressjs.com/en/5x/api/), Node's built-in
 [SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), scrypt password hashing,
-and the built-in test runner. Express is the only package dependency.
+and the built-in test runner. Express serves the API and small browser UI; `qrcode`
+generates authenticator enrollment images.
 
 ## Run
 
@@ -17,7 +18,7 @@ npm ci
 npm start
 ```
 
-The API listens at `http://127.0.0.1:8080`. SQLite creates `data/vault.sqlite` and seeds
+Open `http://127.0.0.1:8080` for the minimal browser UI. SQLite creates `data/vault.sqlite` and seeds
 the demo automatically. Restarting preserves changes. Optionally copy `.env.example`
 to `.env` to change `SERVER_ADDRESS`, `SERVER_PORT`, or `DB_PATH`.
 
@@ -43,7 +44,11 @@ Reset before comparing snapshots so a previous grant does not authorize the atta
 
 ## Accounts and documents
 
-All protected endpoints use HTTP Basic. Each password is `<username>-demo`.
+Each password is `<username>-demo`. Sign in with the password, scan the enrollment QR
+code in an authenticator app, and enter its six-digit TOTP code. Subsequent sign-ins
+only require the password and TOTP code. A password alone creates a pending session
+that cannot access document or permission endpoints. Sessions expire after 12 hours
+and are cleared on server restart; TOTP enrollment persists in SQLite.
 
 | ID | Username | Organization | Role |
 | --- | --- | --- | --- |
@@ -67,12 +72,17 @@ content editing endpoint. Alice initially has access only to document 1.
 
 ## API
 
-The routes, credentials, fixture text, timestamps, and successful JSON fields match
-the original Java application. Permission row IDs identify grants, not users.
+The document routes, fixture text, timestamps, and successful document JSON fields
+match the original Java application. Authentication now uses the TOTP flow above.
+Permission row IDs identify grants, not users.
 
 | Method | Route | Response |
 | --- | --- | --- |
 | GET | `/api/health` | Public `200`, `{"status":"UP"}` |
+| POST | `/api/auth/login` | `{"username":"alice","password":"alice-demo"}` returns a pending bearer token |
+| POST | `/api/auth/enroll` | Pending bearer token returns a QR data URL and manual secret |
+| POST | `/api/auth/verify` | Pending bearer token and `{"code":"123456"}` return an authenticated bearer token |
+| POST | `/api/auth/logout` | Revokes the bearer token |
 | GET | `/api/documents` | Authorized document summaries, sorted by ID |
 | GET | `/api/documents/{id}` | Document summary plus `content` |
 | GET | `/api/documents/{id}/permissions` | Grants sorted by user ID; requires management |
@@ -88,7 +98,8 @@ A full document also has `content`, for example `"Alice's private notes from Org
 A permission response has `id`, `documentId`, `userId`, and `permission`.
 PUT accepts `{"userId":1,"permission":"MANAGE"}`; allowed values are READ, WRITE, MANAGE.
 
-Missing/invalid credentials return `401` with a Basic challenge. Invalid JSON, IDs,
+Send `Authorization: Bearer <token>` on protected requests. Missing/invalid tokens
+return `401`; pending tokens return `403`. Invalid JSON, IDs,
 or permission values return `400`; non-JSON PUT returns `415`. Foreign recipients
 return `400`, missing recipients `404`, and unauthorized management `403`.
 Document GET returns `404` for unknown or unauthorized IDs. Permission GET/PUT
@@ -98,13 +109,14 @@ documents return `404`. Errors use `application/problem+json` with
 
 ## The two experiments
 
-Use `curl.exe` in Windows PowerShell. Run these from the repository root.
+Use the browser UI to authenticate, then pass its authenticated bearer token in
+`Authorization` when repeating these examples with `curl.exe` in Windows PowerShell.
 
 MC1: change the document ID while authenticated as Alice:
 
 ```sh
-curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/1
-curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/3
+curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/1
+curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/3
 ```
 
 On `Vulnerable-Vault`, both return `200`: the second leaks Charlie's confidential
@@ -115,9 +127,9 @@ inside `DocumentService.get` before returning any content.
 MC2: grant Alice management rights on Bob's document:
 
 ```sh
-curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/2/permissions
-curl -i -u alice:alice-demo -X PUT -H "Content-Type: application/json" --data-binary '@examples/grant-alice-manage.json' http://127.0.0.1:8080/api/documents/2/permissions
-curl -i -u alice:alice-demo http://127.0.0.1:8080/api/documents/2/permissions
+curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/2/permissions
+curl -i -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" --data-binary '@examples/grant-alice-manage.json' http://127.0.0.1:8080/api/documents/2/permissions
+curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/2/permissions
 ```
 
 On `Vulnerable-Vault`, the statuses are `403`, `200`, `200`. The grant persists and
@@ -136,7 +148,6 @@ identity. `src/services/` holds the document and permission rules, with one shar
 authorization class. `src/repository.js` owns SQL; `src/database.js` creates and seeds
 SQLite. Services receive their dependencies through constructors.
 
-`Vulnerable-Vault` preserves the vulnerable baseline. Two subsequent commits on
-`main` fix each missing check in place; `Secured-Vault` preserves the final version. Both use the
-same dependencies, schema, routes, and services. No branch-dependent runtime flag
-or alternate application is needed.
+`Vulnerable-Vault` preserves the vulnerable baseline. Two subsequent commits fixed
+each missing check in place; `Secured-Vault` preserves that version. The current
+`main` adds TOTP authentication and the browser UI on top of those fixes.
