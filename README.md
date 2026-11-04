@@ -5,16 +5,17 @@ A small Node.js document API for a school security project. `main` and
 both attacks. Use fictional data and run it locally.
 
 The API uses [Express](https://expressjs.com/en/5x/api/), Node's built-in
-[SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), scrypt password hashing,
+[SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), Argon2id password hashing,
 and the built-in test runner. Express serves the API and small browser UI; `qrcode`
 generates authenticator enrollment images.
 
 ## Run
 
-Install Node.js 24 or newer, then:
+Install Node.js 24.7 or newer, then:
 
 ```sh
 npm ci
+npm run keygen
 npm run cert
 npm start
 ```
@@ -30,6 +31,8 @@ replace them. The certificate and private key in `certs/` are ignored by Git.
 SQLite creates `data/vault.sqlite` and seeds
 the demo automatically. Restarting preserves changes. Optionally copy `.env.example`
 to `.env` to change `SERVER_ADDRESS`, `SERVER_PORT` (HTTP redirect), `HTTPS_PORT`, or `DB_PATH`.
+`npm run keygen` writes a random `DOCUMENT_MASTER_KEY` into the ignored `.env` file
+and keeps an existing key. It must be configured before opening encrypted storage.
 
 ```sh
 npm test
@@ -43,6 +46,7 @@ Docker is optional:
 
 ```sh
 npm run cert
+npm run keygen
 docker compose up --build -d --wait
 docker compose down
 ```
@@ -50,6 +54,8 @@ docker compose down
 Docker mounts the local `certs/` directory read-only and stores data in its own
 `vault-data` volume. `API_PORT` changes its HTTP host port; `HTTPS_PORT` changes its
 HTTPS port (default `8443`).
+If Docker Desktop cannot read `certs/` on a Windows network share, use a local
+checkout for Docker so the certificate bind mount is available to the container.
 To repeat an experiment from fresh fixtures, stop the app and delete
 `data/vault.sqlite`; for Docker, use `docker compose down -v`. Both erase demo grants.
 Reset before comparing snapshots so a previous grant does not authorize the attacker.
@@ -163,14 +169,92 @@ SQLite. Services receive their dependencies through constructors.
 
 ## Document storage proof
 
+The same command shows plaintext on the baseline and ciphertext on the encrypted
+snapshot. No server, certificate, or sign-in is needed:
+
 ```sh
-npm run proof:documents
+git switch encryption-before-Vault
+node --env-file-if-exists=.env scripts/prove-document-storage.js
+git switch encryption-Vault
+node scripts/generate-master-key.js
+node --env-file-if-exists=.env scripts/prove-document-storage.js
 ```
 
 This creates a temporary SQLite file, closes it, and reads its stored rows directly
-without the API. On `encryption-before-Vault`, `content` contains readable document
-text. The temporary file is removed afterward; your application database is untouched.
+without the API. Each run starts fresh, so data from a previous branch cannot affect
+the result. The temporary file is removed afterward; your application database is untouched.
+`npm run proof:documents` is an alias; the direct Node commands also work from
+Windows network paths.
+
+Observed before:
+
+```json
+{"id":1,"content":"Alice's private notes from Organization A."}
+```
+
+Observed after (ciphertext, IVs, tags, and wrapped keys change on each fresh run):
+
+```json
+{"id":1,"version":1,"content":"ViSMamv0oSNm8qWwrATZjKegl621jk6/QFsTKpeANSRJugfiPWma20Mn","iv":"khH67kLCme8a1rAG","authTag":"n9f6SNS/mjIgkSkV6DIf6g=="}
+```
+
+The encrypted proof also prints the wrapped key row from `document_keys`. It never
+prints the master key or an unwrapped document key.
+
+For **any older JavaScript snapshot**, which may not have the npm proof script,
+this identical command also shows its raw SQLite contents in a fresh in-memory database:
+
+```sh
+node --env-file-if-exists=.env --input-type=module -e "import { openDatabase } from './src/database.js'; const db = openDatabase(':memory:'); console.log(db.prepare('SELECT id, content FROM documents ORDER BY id').all()); db.close();"
+```
+
+To inspect the actual local application file after starting the app:
+
+```sh
+node --env-file-if-exists=.env --input-type=module -e "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(process.env.DB_PATH ?? 'data/vault.sqlite', {readOnly:true}); console.log(db.prepare('SELECT id, content FROM documents ORDER BY id').all()); db.close();"
+```
+
+## Envelope encryption
+
+`src/document-encryption.js` uses Node's built-in
+[AES-256-GCM APIs](https://nodejs.org/docs/latest-v24.x/api/crypto.html#class-cipheriv).
+Every content version gets a new random 32-byte data key. Encrypting the content
+and wrapping its key each use an independent random 12-byte IV and a 16-byte
+authentication tag. Document ID, organization ID, version, and purpose are
+authenticated too, so copying envelopes between rows fails verification.
+
+`documents.content` holds Base64 ciphertext; `version`, `iv`, and `authTag` describe
+that ciphertext. The separate `document_keys` table holds the data key encrypted
+under `DOCUMENT_MASTER_KEY`, with its own IV/tag. The master key is 32 random bytes
+encoded as 64 hexadecimal characters and stays outside SQLite in the environment.
+Unwrapped data keys exist only in memory during encryption/decryption.
+
+Authorized API/UI reads still show readable content. Document access is checked
+before decryption, and lists expose only the original metadata fields. Missing or
+invalid master configuration stops startup; wrong keys or damaged records fail
+authentication without falling back to plaintext.
+
+Opening an older database migrates its existing content transactionally and keeps
+IDs, metadata, permissions, passwords, and TOTP enrollment. The migration scrubs
+replaced cells and compacts SQLite so old content is absent from the resulting
+database file. Existing external backups remain separate copies. Keep the master
+key with your backup: generating another key cannot recover existing documents.
+
+The MVP stores only the current version. `VaultRepository.saveDocumentVersion`
+increments its version and atomically replaces the ciphertext and wrapped key;
+tests exercise version 1 and version 2. There is no new editing UI or API.
+
+`npm test` checks fresh keys/IVs, tampering, wrong keys, version changes, migration
+rollback, persistence, removal of plaintext from the database file, and the existing
+authorization/TOTP/API behavior. `main` and `encryption-Vault` contain the finished
+encryption change; previous snapshots retain their original behavior.
+
+Verification: all 34 tests pass. The raw SQLite proof was run before and after;
+the Docker image was also checked with HTTPS/TOTP, authorized decryption, stored
+ciphertext, and wrapped keys. The network-share certificate mount required copying
+the development certificates into the isolated test container.
 
 `Vulnerable-Vault` preserves the vulnerable baseline. Two subsequent commits fixed
 each missing check in place; `Secured-Vault` preserves that version. The current
-`main` adds TOTP authentication and the browser UI on top of those fixes.
+`main` adds TOTP authentication, Argon2id, HTTPS, the browser UI, and document
+envelope encryption on top of those fixes.
