@@ -12,7 +12,7 @@ test('normal filename searches respect the existing document access rules', asyn
   const response = await fixture.request(search('alice'));
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.map(document => document.id), [1]);
-  assert.equal(response.body[0].content, undefined);
+  assert.deepEqual(Object.keys(response.body[0]).sort(), ['createdAt', 'filename', 'id', 'organizationId', 'ownerId']);
   for (const filename of ['bob', 'charlie', 'missing']) {
     assert.deepEqual((await fixture.request(search(filename))).body, []);
   }
@@ -26,9 +26,29 @@ test('search requires a verified session', async () => {
   assert.equal((await fixture.raw(search('alice'), { headers: { Authorization: `Bearer ${login.body.token}` } })).status, 403);
 });
 
-test('SQL injection bypasses the filename, tenant, and permission predicates', async () => {
-  const response = await fixture.request(search("' OR 1=1 --"));
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body.map(document => document.id), [1, 2, 3, 4]);
-  assert.ok(response.body.some(document => document.organizationId === 2));
+test('SQL injection is treated as filename data and cannot bypass access predicates', async () => {
+  for (const payload of ["' OR 1=1 --", "x' OR 1=1 --", "' UNION SELECT id, organizationId, ownerId, filename, createdAt FROM documents --"]) {
+    const response = await fixture.request(search(payload));
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, []);
+  }
+});
+
+test('apostrophes and LIKE wildcards still work as ordinary filename searches', async () => {
+  fixture.db.prepare('UPDATE documents SET filename = ? WHERE id = 1').run("Alice's notes.txt");
+  for (const filename of ["Alice's", '%', '_', '']) {
+    assert.deepEqual((await fixture.request(search(filename))).body.map(document => document.id), [1]);
+  }
+});
+
+test('search keeps tenant, owner, manager, and explicit read permission rules', async () => {
+  for (const [user, ids] of [['alice', [1]], ['bob', [1, 2]], ['adminA', []], ['charlie', [3]], ['diana', [3, 4]]]) {
+    assert.deepEqual((await fixture.request(search(''), { user })).body.map(document => document.id), ids);
+  }
+  for (const permission of ['READ', 'WRITE', 'MANAGE']) {
+    fixture.repository.savePermission(2, 1, permission);
+    assert.deepEqual((await fixture.request(search('bob'))).body.map(document => document.id), [2]);
+  }
+  fixture.repository.savePermission(3, 1, 'MANAGE');
+  assert.deepEqual((await fixture.request(search('charlie'))).body, []);
 });

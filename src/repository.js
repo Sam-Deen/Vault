@@ -35,8 +35,8 @@ export class VaultRepository {
       SELECT id, organizationId, ownerId, filename, createdAt FROM documents d
       WHERE organizationId = ? AND (ownerId = ? OR ? = 'WORKSPACE_MANAGER'
         OR EXISTS (SELECT 1 FROM permissions p WHERE p.documentId = d.id AND p.userId = ?))
-        AND filename LIKE '%${filename}%' ORDER BY id
-    `).all(user.organizationId, user.id, user.role, user.id);
+        AND filename LIKE ? ORDER BY id
+    `).all(user.organizationId, user.id, user.role, user.id, `%${filename}%`);
   }
 
   readDocumentContent(id) {
