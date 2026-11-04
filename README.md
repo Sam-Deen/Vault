@@ -161,6 +161,16 @@ identity. `src/services/` holds the document and permission rules, with one shar
 authorization class. `src/repository.js` owns SQL; `src/database.js` creates and seeds
 SQLite. Services receive their dependencies through constructors.
 
+## Document storage proof
+
+```sh
+npm run proof:documents
+```
+
+This creates a temporary SQLite file, closes it, and reads its stored rows directly
+without the API. On `encryption-before-Vault`, `content` contains readable document
+text. The temporary file is removed afterward; your application database is untouched.
+
 `Vulnerable-Vault` preserves the vulnerable baseline. Two subsequent commits fixed
 each missing check in place; `Secured-Vault` preserves that version. The current
 `main` adds TOTP authentication and the browser UI on top of those fixes.
