@@ -257,14 +257,47 @@ as Alice through the existing TOTP flow and use her authenticated bearer token.
 Import `examples/search.postman_collection.json` into Postman, set `baseUrl` and
 `token`, then send both requests:
 
-| Filename | Vulnerable result |
-| --- | --- |
-| `alice` | Document 1 |
-| `' OR 1=1 --` | Documents 1, 2, 3, 4, including Organization B |
+| Filename | Vulnerable result | Secured result |
+| --- | --- | --- |
+| `alice` | `200`, document 1 | `200`, document 1 |
+| `' OR 1=1 --` | `200`, documents 1, 2, 3, 4, including Organization B | `200`, `[]` |
 
 The ordinary query checks organization and document access. The injected `OR 1=1`
 changes that condition and comments out the rest of the query. Search returns
 metadata only. `node --test test/search.test.js` reproduces the experiment.
+
+`main` and `sql-injection-Vault` fix the query in place: `filename LIKE ?` binds
+the pattern with `.all(..., \`%${filename}%\`)`. The tenant and document permission
+conditions stay in the same query. Apostrophes, empty searches, and LIKE wildcards
+continue to work.
+
+Start the vulnerable snapshot:
+
+```sh
+git switch sql-injection-before-Vault
+npm start
+```
+
+In Postman, send `GET https://127.0.0.1:8443/api/documents/search` with Alice's
+verified bearer token. In Params, set `filename` to `alice`, then to `' OR 1=1 --`.
+Stop the server, switch snapshots, restart, and sign in again before repeating:
+
+```sh
+git switch sql-injection-Vault
+npm start
+```
+
+For automated Postman assertions, import the collection from the current snapshot;
+its expected injection IDs change from `[1,2,3,4]` to `[]`. Set `baseUrl` and `token`.
+The same requests can be run using the
+[Postman CLI](https://learning.postman.com/docs/postman-cli/postman-cli-collections):
+
+```sh
+postman collection run examples/search.postman_collection.json --env-var "token=<Alice's verified token>" --ssl-extra-ca-certs certs/localhost.pem
+```
+
+Both Postman runs passed their two assertions. All 39 Node tests pass, including
+normal search, injection variants, tenant isolation, and explicit permissions.
 
 Verification: all 34 tests pass. The raw SQLite proof was run before and after;
 the Docker image was also checked with HTTPS/TOTP, authorized decryption, stored
