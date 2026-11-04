@@ -11,6 +11,10 @@ export class DocumentService {
       .filter(document => this.authorization.canRead(user, document));
   }
 
+  search(user, filename) {
+    return this.repository.searchDocuments(user, filename);
+  }
+
   get(user, id) {
     const document = this.repository.findDocument(id);
     if (!this.authorization.canRead(user, document)) throw new HttpError(404, 'Document not found');

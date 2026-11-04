@@ -30,6 +30,15 @@ export class VaultRepository {
     return this.db.prepare('SELECT id, organizationId, ownerId, filename, createdAt FROM documents WHERE organizationId = ? ORDER BY id').all(organizationId);
   }
 
+  searchDocuments(user, filename) {
+    return this.db.prepare(`
+      SELECT id, organizationId, ownerId, filename, createdAt FROM documents d
+      WHERE organizationId = ? AND (ownerId = ? OR ? = 'WORKSPACE_MANAGER'
+        OR EXISTS (SELECT 1 FROM permissions p WHERE p.documentId = d.id AND p.userId = ?))
+        AND filename LIKE '%${filename}%' ORDER BY id
+    `).all(user.organizationId, user.id, user.role, user.id);
+  }
+
   readDocumentContent(id) {
     const document = this.db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
     const key = this.db.prepare('SELECT * FROM document_keys WHERE documentId = ? AND version = ?').get(id, document.version);

@@ -52,6 +52,7 @@ export function createApp(db, encryption) {
     next();
   });
   app.get('/api/documents', (req, res) => res.json(documents.list(req.user)));
+  app.get('/api/documents/search', (req, res) => res.json(documents.search(req.user, String(req.query.filename ?? ''))));
   app.get('/api/documents/:id', (req, res) => res.json(documents.get(req.user, req.documentId)));
   app.get('/api/documents/:id/permissions', (req, res) => {
     res.json(permissions.list(req.user, req.documentId));
