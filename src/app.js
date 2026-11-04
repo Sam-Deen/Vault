@@ -1,5 +1,6 @@
 import express from 'express';
 import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import { STATUS_CODES } from 'node:http';
 import { VaultRepository } from './repository.js';
 import { createAuthentication } from './authentication.js';
@@ -18,6 +19,13 @@ export function createApp(db, encryption) {
   const permissions = new PermissionService(repository, authorization);
   const authentication = createAuthentication(repository);
   app.use(helmet());
+  app.use('/api', rateLimit({
+    windowMs: 60_000,
+    limit: 30,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: (req, res, next) => next(new HttpError(429, 'Too many requests; try again later')),
+  }));
   app.use(express.static('public'));
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   const json = express.json({ limit: '4kb' });
