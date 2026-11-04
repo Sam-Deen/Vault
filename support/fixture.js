@@ -49,7 +49,7 @@ export async function startFixture() {
     return verified;
   }
   return {
-    db, repository, raw, login,
+    db, repository, raw, login, base,
     async request(path, { user = 'alice', password = `${user}-demo`, method = 'GET', body, headers = {} } = {}) {
       if (user && !tokens.has(user) && password === `${user}-demo`) await login(user, password);
       return raw(path, { method, body, headers: { ...(tokens.has(user) ? { Authorization: `Bearer ${tokens.get(user)}` } : {}), ...headers } });

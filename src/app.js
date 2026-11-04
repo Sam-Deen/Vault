@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import { STATUS_CODES } from 'node:http';
 import { VaultRepository } from './repository.js';
 import { createAuthentication } from './authentication.js';
@@ -16,7 +17,7 @@ export function createApp(db, encryption) {
   const documents = new DocumentService(repository, authorization);
   const permissions = new PermissionService(repository, authorization);
   const authentication = createAuthentication(repository);
-  app.disable('x-powered-by');
+  app.use(helmet());
   app.use(express.static('public'));
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   const json = express.json({ limit: '4kb' });
