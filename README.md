@@ -102,6 +102,7 @@ Permission row IDs identify grants, not users.
 | POST | `/api/auth/verify` | Pending bearer token and `{"code":"123456"}` return an authenticated bearer token |
 | POST | `/api/auth/logout` | Revokes the bearer token |
 | GET | `/api/documents` | Authorized document summaries, sorted by ID |
+| GET | `/api/documents/search?filename=alice` | Filename substring search returning document summaries |
 | GET | `/api/documents/{id}` | Document summary plus `content` |
 | GET | `/api/documents/{id}/permissions` | Grants sorted by user ID; requires management |
 | PUT | `/api/documents/{id}/permissions` | Creates or updates one grant; returns it with `200` |
@@ -248,6 +249,22 @@ tests exercise version 1 and version 2. There is no new editing UI or API.
 rollback, persistence, removal of plaintext from the database file, and the existing
 authorization/TOTP/API behavior. `main` and `encryption-Vault` contain the finished
 encryption change; previous snapshots retain their original behavior.
+
+## Filename search experiment
+
+`sql-injection-before-Vault` deliberately inserts the filename into SQL. Sign in
+as Alice through the existing TOTP flow and use her authenticated bearer token.
+Import `examples/search.postman_collection.json` into Postman, set `baseUrl` and
+`token`, then send both requests:
+
+| Filename | Vulnerable result |
+| --- | --- |
+| `alice` | Document 1 |
+| `' OR 1=1 --` | Documents 1, 2, 3, 4, including Organization B |
+
+The ordinary query checks organization and document access. The injected `OR 1=1`
+changes that condition and comments out the rest of the query. Search returns
+metadata only. `node --test test/search.test.js` reproduces the experiment.
 
 Verification: all 34 tests pass. The raw SQLite proof was run before and after;
 the Docker image was also checked with HTTPS/TOTP, authorized decryption, stored

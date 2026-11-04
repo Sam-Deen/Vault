@@ -1,0 +1,28 @@
+{
+  "info": {
+    "name": "Vault filename search",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://127.0.0.1:8443" },
+    { "key": "token", "value": "" },
+    { "key": "injectionIds", "value": "[1,2,3,4]" }
+  ],
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+  "item": [
+    {
+      "name": "Normal search as Alice",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/documents/search?filename=alice" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('Normal search returns only Alice document 1', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().map(d => d.id)).to.eql([1]); });"
+      ] } }]
+    },
+    {
+      "name": "SQL injection as Alice",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/documents/search?filename=%27%20OR%201%3D1%20--" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('Injection result matches this snapshot', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().map(d => d.id)).to.eql(JSON.parse(pm.variables.get('injectionIds'))); });"
+      ] } }]
+    }
+  ]
+}
