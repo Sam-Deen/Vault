@@ -1,6 +1,9 @@
+import { DocumentEncryption } from './document-encryption.js';
+
 export class VaultRepository {
-  constructor(db) {
+  constructor(db, encryption = new DocumentEncryption()) {
     this.db = db;
+    this.encryption = encryption;
   }
 
   findUserByUsername(username) {
@@ -20,11 +23,38 @@ export class VaultRepository {
   }
 
   findDocument(id) {
-    return this.db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+    return this.db.prepare('SELECT id, organizationId, ownerId, filename, createdAt FROM documents WHERE id = ?').get(id);
   }
 
   listDocuments(organizationId) {
-    return this.db.prepare('SELECT * FROM documents WHERE organizationId = ? ORDER BY id').all(organizationId);
+    return this.db.prepare('SELECT id, organizationId, ownerId, filename, createdAt FROM documents WHERE organizationId = ? ORDER BY id').all(organizationId);
+  }
+
+  readDocumentContent(id) {
+    const document = this.db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+    const key = this.db.prepare('SELECT * FROM document_keys WHERE documentId = ? AND version = ?').get(id, document.version);
+    return this.encryption.decrypt(document, key);
+  }
+
+  // This MVP retains only the current version; replacing content rotates its key.
+  saveDocumentVersion(id, content) {
+    this.db.exec('SAVEPOINT document_version');
+    try {
+      const document = this.db.prepare('SELECT id, organizationId, version FROM documents WHERE id = ?').get(id);
+      if (!document) throw new Error('Document not found');
+      const version = document.version + 1;
+      const encrypted = this.encryption.encrypt(content, { ...document, version });
+      this.db.prepare('UPDATE documents SET content = ?, version = ?, iv = ?, authTag = ? WHERE id = ?')
+        .run(encrypted.content, version, encrypted.iv, encrypted.authTag, id);
+      this.db.prepare('INSERT INTO document_keys (documentId, version, wrappedKey, iv, authTag) VALUES (?, ?, ?, ?, ?)')
+        .run(id, version, encrypted.wrappedKey, encrypted.keyIv, encrypted.keyAuthTag);
+      this.db.prepare('DELETE FROM document_keys WHERE documentId = ? AND version <> ?').run(id, version);
+      this.db.exec('RELEASE document_version');
+      return version;
+    } catch (error) {
+      this.db.exec('ROLLBACK TO document_version; RELEASE document_version');
+      throw error;
+    }
   }
 
   findPermission(documentId, userId) {

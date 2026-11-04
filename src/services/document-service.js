@@ -8,14 +8,13 @@ export class DocumentService {
 
   list(user) {
     return this.repository.listDocuments(user.organizationId)
-      .filter(document => this.authorization.canRead(user, document))
-      .map(({ content, ...summary }) => summary);
+      .filter(document => this.authorization.canRead(user, document));
   }
 
   get(user, id) {
     const document = this.repository.findDocument(id);
     if (!this.authorization.canRead(user, document)) throw new HttpError(404, 'Document not found');
-    return document;
+    return { ...document, content: this.repository.readDocumentContent(id) };
   }
 }
 

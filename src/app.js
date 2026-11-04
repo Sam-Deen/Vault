@@ -9,9 +9,9 @@ import { DocumentAuthorization } from './services/document-authorization.js';
 import { DocumentService } from './services/document-service.js';
 import { PermissionService } from './services/permission-service.js';
 
-export function createApp(db) {
+export function createApp(db, encryption) {
   const app = express();
-  const repository = new VaultRepository(db);
+  const repository = new VaultRepository(db, encryption);
   const authorization = new DocumentAuthorization(repository);
   const documents = new DocumentService(repository, authorization);
   const permissions = new PermissionService(repository, authorization);

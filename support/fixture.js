@@ -2,7 +2,10 @@ import { once } from 'node:events';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/database.js';
 import { VaultRepository } from '../src/repository.js';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+import { DocumentEncryption } from '../src/document-encryption.js';
+
+export const testEncryption = new DocumentEncryption(randomBytes(32).toString('hex'));
 
 export function totpCode(secret) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -20,9 +23,9 @@ export function totpCode(secret) {
 }
 
 export async function startFixture() {
-  const db = openDatabase(':memory:');
-  const repository = new VaultRepository(db);
-  const server = createApp(db).listen(0, '127.0.0.1');
+  const db = openDatabase(':memory:', testEncryption);
+  const repository = new VaultRepository(db, testEncryption);
+  const server = createApp(db, testEncryption).listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   const tokens = new Map();
