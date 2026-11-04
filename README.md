@@ -9,6 +9,40 @@ The API uses [Express](https://expressjs.com/en/5x/api/), Node's built-in
 and the built-in test runner. Express serves the API and small browser UI; `qrcode`
 generates authenticator enrollment images.
 
+## HTTP security controls
+
+`main` and `http-security-Vault` use [Helmet](https://helmet.js.org/) for standard
+security headers and [express-rate-limit](https://express-rate-limit.mintlify.app/)
+for **30 API requests per IP per minute**. Successful and failed requests count,
+including health, login, TOTP, document, and search requests. Excess requests return
+`429` with `Retry-After`, rate-limit headers, and the usual JSON error body.
+The quota resets after a minute or a server restart.
+
+| Security control | Test | Expected result |
+| --- | --- | --- |
+| SQL injection | Search with filename `' OR 1=1 --` | `200`, `[]`; tenant and document permissions remain enforced |
+| Security headers | Inspect an HTTPS response | CSP, HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, and `Referrer-Policy: no-referrer` |
+| Rate limiting | Send 31 API requests from one IP within a minute | The first 30 are processed; request 31 returns `429` with `Retry-After` |
+| Error handling | POST malformed JSON (`{`) to `/api/auth/login` | `400` with `Malformed JSON`; no SQL, stack trace, key, or document contents |
+
+Inspect the headers with the development certificate:
+
+```powershell
+curl.exe --cacert certs/localhost.pem -i https://127.0.0.1:8443/api/health
+```
+
+After restarting the server or waiting for the quota to reset, test the limit:
+
+```powershell
+1..31 | ForEach-Object { curl.exe --cacert certs/localhost.pem -s -o NUL -w "%{http_code}\n" https://127.0.0.1:8443/api/health }
+```
+
+Run the focused checks with `node --test test/http-security.test.js`, or the full
+suite with `npm test`. `sql-injection-Vault` retains the preceding implementation
+for comparison.
+All 43 tests pass; direct HTTPS checks also confirm the headers and the transition
+from 30 successful requests to `429` on request 31.
+
 ## Run
 
 Install Node.js 24.7 or newer, then:
