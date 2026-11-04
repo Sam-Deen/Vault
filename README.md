@@ -15,12 +15,21 @@ Install Node.js 24 or newer, then:
 
 ```sh
 npm ci
+npm run cert
 npm start
 ```
 
-Open `http://127.0.0.1:8080` for the minimal browser UI. SQLite creates `data/vault.sqlite` and seeds
+Open `https://localhost:8443` for the minimal browser UI. All HTTP requests on port
+8080 redirect to HTTPS with status `308`, preserving the method, path, and query.
+HTTPS accepts TLS 1.3 only. `npm run cert` requires OpenSSL (Git for Windows works)
+and generates a self-signed certificate for `localhost`, `127.0.0.1`, and `::1`.
+Accept the browser's certificate warning for local development, or trust the
+certificate locally. Certificates expire after one year; rerun `npm run cert` to
+replace them. The certificate and private key in `certs/` are ignored by Git.
+
+SQLite creates `data/vault.sqlite` and seeds
 the demo automatically. Restarting preserves changes. Optionally copy `.env.example`
-to `.env` to change `SERVER_ADDRESS`, `SERVER_PORT`, or `DB_PATH`.
+to `.env` to change `SERVER_ADDRESS`, `SERVER_PORT` (HTTP redirect), `HTTPS_PORT`, or `DB_PATH`.
 
 ```sh
 npm test
@@ -33,11 +42,14 @@ vulnerable snapshot, its tests deliberately assert successful attacks instead.
 Docker is optional:
 
 ```sh
+npm run cert
 docker compose up --build -d --wait
 docker compose down
 ```
 
-Docker stores data in its own `vault-data` volume. `API_PORT` changes its host port.
+Docker mounts the local `certs/` directory read-only and stores data in its own
+`vault-data` volume. `API_PORT` changes its HTTP host port; `HTTPS_PORT` changes its
+HTTPS port (default `8443`).
 To repeat an experiment from fresh fixtures, stop the app and delete
 `data/vault.sqlite`; for Docker, use `docker compose down -v`. Both erase demo grants.
 Reset before comparing snapshots so a previous grant does not authorize the attacker.
@@ -111,12 +123,13 @@ documents return `404`. Errors use `application/problem+json` with
 
 Use the browser UI to authenticate, then pass its authenticated bearer token in
 `Authorization` when repeating these examples with `curl.exe` in Windows PowerShell.
+The `-k` flag accepts the self-signed development certificate for these requests.
 
 MC1: change the document ID while authenticated as Alice:
 
 ```sh
-curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/1
-curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/3
+curl -k -i -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/documents/1
+curl -k -i -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/documents/3
 ```
 
 On `Vulnerable-Vault`, both return `200`: the second leaks Charlie's confidential
@@ -127,9 +140,9 @@ inside `DocumentService.get` before returning any content.
 MC2: grant Alice management rights on Bob's document:
 
 ```sh
-curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/2/permissions
-curl -i -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" --data-binary '@examples/grant-alice-manage.json' http://127.0.0.1:8080/api/documents/2/permissions
-curl -i -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/documents/2/permissions
+curl -k -i -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/documents/2/permissions
+curl -k -i -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" --data-binary '@examples/grant-alice-manage.json' https://127.0.0.1:8443/api/documents/2/permissions
+curl -k -i -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/documents/2/permissions
 ```
 
 On `Vulnerable-Vault`, the statuses are `403`, `200`, `200`. The grant persists and
