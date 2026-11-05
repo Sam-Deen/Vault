@@ -6,6 +6,7 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+COPY monitoring.json ./
 RUN mkdir -p certs logs && chown node:node certs logs
 USER node
 ENV SERVER_ADDRESS=0.0.0.0

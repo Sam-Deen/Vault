@@ -1,0 +1,10 @@
+{
+  "windowSeconds": 60,
+  "thresholds": {
+    "authentication.failed": 5,
+    "totp.failed": 3,
+    "document.access_denied": 3,
+    "permission.modification_denied": 3,
+    "rate_limited": 3
+  }
+}
