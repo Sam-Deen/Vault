@@ -10,7 +10,7 @@ const operations = [
   ['Change role privileges', 'ALTER ROLE vault_app SUPERUSER'],
   ['Delete unrelated records', 'DELETE FROM organizations WHERE id = -1'],
 ];
-for (const [role, password] of [['vault_admin', 'vault-admin-demo'], ['vault_app', 'vault-app-demo']]) {
+for (const [role, password] of [['vault_admin', 'vault-admin-demo'], ['vault_app', 'vault-app-demo'], ['vault_readonly', 'vault-readonly-demo']]) {
   const url = new URL(adminUrl);
   url.username = role;
   url.password = password;

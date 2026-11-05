@@ -152,7 +152,7 @@ test('PostgreSQL reconnect and seeding preserve grants and encrypted data', asyn
     assert.equal((await repository.findPermission(1, 2)).permission, 'READ');
     assert.equal((await repository.findUser(1)).passwordHash, storedPassword);
     for (const [table, count] of [['organizations', 2], ['users', 7], ['documents', 4], ['permissions', 7]]) {
-      assert.equal((await db.query('SELECT count(*) AS count FROM ' + table)).rows[0].count, count);
+      assert.equal((await fixture.db.query('SELECT count(*) AS count FROM ' + table)).rows[0].count, count);
     }
   } finally { await db.end(); }
 });
