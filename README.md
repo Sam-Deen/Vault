@@ -3,7 +3,7 @@
 A small Node.js security project using Express and PostgreSQL in Docker. It keeps
 Argon2id passwords, TOTP sign-in, document permissions, envelope encryption,
 parameterized filename search, security headers, rate limiting, document RLS,
-and structured security logging.
+structured security logging, and threshold-based monitoring.
 
 `postgres-before-Vault` preserves the excessive-privilege baseline. `main` and
 `postgres-Vault` use separate administration, application, and read-only accounts.
@@ -11,6 +11,8 @@ and structured security logging.
 `rls-Vault` and `main` add organization policies.
 `logging-before-Vault` preserves the app before security logging;
 `logging-Vault` and `main` include the logger.
+`monitoring-before-Vault` preserves logging without monitoring;
+`monitoring-Vault` and `main` include the monitoring script.
 
 ## Start
 
@@ -299,6 +301,75 @@ message. To watch new events, use `docker compose exec app tail -f logs/security
 For local Node execution, use `Get-Content logs/security.jsonl -Wait` in PowerShell.
 Log files, certificates, and runtime authentication values are excluded from Git.
 
+## Security monitoring
+
+The monitor reads JSON security events, checks a rolling time window, and prints
+JSON alerts to the terminal. Configure the window and allowed event counts in
+`monitoring.json`. Defaults use a 60-second window:
+
+| Pattern | Allowed count | Alert on |
+| --- | --- | --- |
+| Failed authentication | 5 | 6th event |
+| Failed TOTP | 3 | 4th event |
+| Denied document access | 3 | 4th event |
+| Denied permission modification | 3 | 4th event |
+| Rate limiting | 3 | 4th event |
+
+Counts are separate for each event type, user, and organization. Events with
+`null` identity, including failed password logins and rate limiting, are counted
+together per event type. Successful authentication and authorized permission
+changes do not count as suspicious events. Events expire from the window; counts
+at the limit do not alert. An alert is emitted when a count reaches limit + 1.
+
+Alerts contain the event type, timestamp, count, threshold, window, user and
+organization IDs, triggering request ID, and contributing request IDs. Sensitive
+fields from input records are not copied into alerts. Each run scans the log in
+timestamp order and reports its historical threshold crossings; running it again
+reports the same crossings.
+
+Read actual application logs in Docker:
+
+```sh
+docker compose up --build -d --wait
+docker compose exec app node scripts/monitor-security.js
+```
+
+For local Node logs, run `npm run monitor`. Supply another file with
+`npm run monitor -- path/to/events.jsonl`; otherwise it uses `SECURITY_LOG_FILE`
+or `logs/security.jsonl`.
+
+Prove the thresholds without starting the app or database:
+
+```sh
+npm run monitor:demo -- --below
+npm run monitor -- logs/monitoring-demo.jsonl
+```
+
+This generates events at each allowed limit and produces **no alerts**. Then:
+
+```sh
+npm run monitor:demo
+npm run monitor -- logs/monitoring-demo.jsonl
+```
+
+This generates one extra event per pattern and produces **five JSON alerts**:
+authentication count 6, and count 4 for each other rule. The generator replaces
+only `logs/monitoring-demo.jsonl`; actual application logs are preserved.
+Both commands can also run in Docker using
+`docker compose exec app node scripts/generate-monitoring-events.js` (add
+`--below` for the first case), followed by
+`docker compose exec app node scripts/monitor-security.js logs/monitoring-demo.jsonl`.
+
+To generate genuine failed-login events with the existing Postman collection:
+
+```sh
+postman collection run examples/security-logging.postman_collection.json -i "Incorrect Alice password" -n 6 --insecure --no-report-events
+docker compose exec app node scripts/monitor-security.js
+```
+
+Six failed logins within 60 seconds produce an `authentication.failed` alert with
+`count: 6` and `threshold: 5`. Match its request IDs to the source log entries.
+
 ## Development and tests
 
 For local Node execution with only PostgreSQL in Docker:
@@ -327,7 +398,7 @@ transactions, persistence, headers, and rate limiting.
 SQL operations, including permitted grant insertion/updating and rejected table,
 role, sensitive-column, deletion, and privilege-escalation operations.
 
-Verification passed all 53 tests. Fresh Docker startup and real HTTPS checks also
+Verification passed all 59 tests. Fresh Docker startup and real HTTPS checks also
 passed password/TOTP authentication, document decryption, tenant isolation,
 parameterized search, and permission insertion/updating under `vault_app`. The
 before/after role probes confirmed administrative SQL changes from ALLOWED to
@@ -339,3 +410,7 @@ Logging tests check required events, response/log request-ID correlation, permit
 fields, and exclusion of actual passwords, tokens, TOTP secrets/codes, and contents.
 The Postman logging collection passed 64 assertions against a fresh Docker stack;
 the resulting log entries matched its request IDs and expected event/status fields.
+Monitoring tests verify every rule, exact threshold/window boundaries, separate
+identities, benign events, sensitive-field exclusions, and both demo commands.
+Postman generated five real failed logins with no alert; the sixth produced the
+expected authentication alert from the Docker application's security log.
