@@ -2,12 +2,15 @@
 
 A small Node.js security project using Express and PostgreSQL in Docker. It keeps
 Argon2id passwords, TOTP sign-in, document permissions, envelope encryption,
-parameterized filename search, security headers, rate limiting, and document RLS.
+parameterized filename search, security headers, rate limiting, document RLS,
+and structured security logging.
 
 `postgres-before-Vault` preserves the excessive-privilege baseline. `main` and
 `postgres-Vault` use separate administration, application, and read-only accounts.
 `rls-before-Vault` preserves document SELECT access across organizations;
 `rls-Vault` and `main` add organization policies.
+`logging-before-Vault` preserves the app before security logging;
+`logging-Vault` and `main` include the logger.
 
 ## Start
 
@@ -33,7 +36,7 @@ docker compose down -v
 docker compose up --build -d --wait
 ```
 
-This resets the demo database and its TLS certificate. Keep `.env`, which holds
+This resets the demo database, TLS certificate, and security log volume. Keep `.env`, which holds
 `DOCUMENT_MASTER_KEY`. Ordinary `docker compose down` preserves the data.
 
 To use curl with the development certificate:
@@ -248,6 +251,54 @@ SELECT id FROM documents WHERE "organizationId" = 2;
 ROLLBACK;
 ```
 
+## Security logging
+
+Each incoming request receives a generated UUID in the `X-Request-Id` response
+header. Client-supplied request IDs are ignored. Security events are one JSON
+object per line in `logs/security.jsonl`, separate from API responses and normal
+console output. Docker persists this file in `vault-security-logs`.
+Local Node runs can change its path with `SECURITY_LOG_FILE`.
+
+Every event includes UTC `timestamp`, `event`, `requestId`, HTTP `method`, route
+template, response `status`, `userId`, and `organizationId`. Identity is `null`
+when no trusted user identity is available. Document/permission events add `documentId`;
+permission changes also include `targetUserId` and `permission` when valid.
+Only these fields are accepted. Passwords, bearer tokens, TOTP codes/secrets,
+document contents, request bodies, headers, and query strings are excluded.
+
+| Action | Event | HTTP status |
+| --- | --- | --- |
+| Correct password, awaiting TOTP | `authentication.password_accepted` | 200 |
+| Complete password/TOTP login | `authentication.succeeded` | 200 |
+| Incorrect password | `authentication.failed` | 401 |
+| Invalid TOTP code | `totp.failed` | 401 |
+| Alice reads Organization B document 3 | `document.access_denied` | 404 |
+| Alice changes Bob's document 2 permissions | `permission.modification_denied` | 403 |
+| Alice grants READ on her document 1 | `permission.modified` | 200 |
+| Exceed API request limit | `rate_limited` | 429 |
+
+Import `examples/security-logging.postman_collection.json` into Postman and run
+the collection, or use the installed Postman CLI. Use a fresh demo database so
+the collection can enroll Alice, generate TOTP codes, and complete authentication.
+The run then triggers each event and checks unique request IDs. The allowed
+permission request grants `hashAlice` READ on Alice's document. The final request
+repeats until the API returns 429. Allow the rate-limit window to reset before
+another run. For an already enrolled Alice, set the collection's `totpSecret`
+locally to her enrollment secret.
+
+```sh
+docker compose up --build -d --wait
+postman collection run examples/security-logging.postman_collection.json --insecure --no-report-events
+docker compose exec app cat logs/security.jsonl
+```
+
+`--insecure` accepts the local development certificate. In the Postman app,
+disable certificate verification for this local run or trust its certificate.
+Match each log's `requestId` with the response header or the collection's console
+message. To watch new events, use `docker compose exec app tail -f logs/security.jsonl`.
+For local Node execution, use `Get-Content logs/security.jsonl -Wait` in PowerShell.
+Log files, certificates, and runtime authentication values are excluded from Git.
+
 ## Development and tests
 
 For local Node execution with only PostgreSQL in Docker:
@@ -276,7 +327,7 @@ transactions, persistence, headers, and rate limiting.
 SQL operations, including permitted grant insertion/updating and rejected table,
 role, sensitive-column, deletion, and privilege-escalation operations.
 
-Verification passed all 50 tests. Fresh Docker startup and real HTTPS checks also
+Verification passed all 53 tests. Fresh Docker startup and real HTTPS checks also
 passed password/TOTP authentication, document decryption, tenant isolation,
 parameterized search, and permission insertion/updating under `vault_app`. The
 before/after role probes confirmed administrative SQL changes from ALLOWED to
@@ -284,3 +335,7 @@ DENIED (`42501`) for the application account.
 Row-security tests also check both SELECT roles, missing context, pooled connection
 reuse, rollback, concurrent organizations, forged HTTP organization identifiers,
 and startup rejection of damaged ciphertext in other organizations.
+Logging tests check required events, response/log request-ID correlation, permitted
+fields, and exclusion of actual passwords, tokens, TOTP secrets/codes, and contents.
+The Postman logging collection passed 64 assertions against a fresh Docker stack;
+the resulting log entries matched its request IDs and expected event/status fields.
