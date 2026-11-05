@@ -11,8 +11,9 @@ import { DocumentAuthorization } from './services/document-authorization.js';
 import { DocumentService } from './services/document-service.js';
 import { PermissionService } from './services/permission-service.js';
 import { withOrganization } from './organization-context.js';
+import { SecurityLogger, securityLogging } from './security-logging.js';
 
-export function createApp(db, encryption) {
+export function createApp(db, encryption, logger = new SecurityLogger()) {
   const app = express();
   const repository = new VaultRepository(db, encryption);
   const authentication = createAuthentication(repository);
@@ -24,6 +25,7 @@ export function createApp(db, encryption) {
       permissions: new PermissionService(scopedRepository, authorization),
     });
   });
+  app.use(securityLogging(logger));
   app.use(helmet());
   app.use('/api', rateLimit({
     windowMs: 60_000,
@@ -36,8 +38,7 @@ export function createApp(db, encryption) {
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   const json = express.json({ limit: '4kb' });
   app.post('/api/auth/login', json, async (req, res) => {
-    const { username, password } = req.body ?? {};
-    res.set('Cache-Control', 'no-store').json(await authentication.login(username, password));
+    res.set('Cache-Control', 'no-store').json(await authentication.login(req));
   });
   app.post('/api/auth/enroll', authentication.pending, async (req, res) => {
     const user = req.auth.user;

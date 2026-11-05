@@ -37,6 +37,7 @@ services:
       - "127.0.0.1:${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
     volumes:
       - vault-certs:/app/certs
+      - vault-security-logs:/app/logs
     depends_on:
       seed:
         condition: service_completed_successfully
@@ -48,3 +49,4 @@ services:
 volumes:
   vault-postgres-data:
   vault-certs:
+  vault-security-logs:

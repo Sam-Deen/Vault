@@ -3,6 +3,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { createApp } from './app.js';
 import { openDatabase } from './database.js';
+import { assignRequestId } from './security-logging.js';
 
 const host = process.env.SERVER_ADDRESS ?? '127.0.0.1';
 const port = Number(process.env.SERVER_PORT ?? 8080);
@@ -18,6 +19,7 @@ const server = createHttpsServer(tls, createApp(db)).listen(httpsPort, host, () 
   console.log(`Vault listening on https://${host}:${httpsPort}`);
 });
 const redirect = createHttpServer((req, res) => {
+  assignRequestId(req, res);
   let target;
   try {
     target = new URL(`https://${req.headers.host}`);

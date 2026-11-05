@@ -21,11 +21,13 @@ export function createAuthentication(repository) {
     return { token, entry, user: await repository.findUser(entry.userId) };
   }
   return {
-    async login(username, password) {
+    async login(req) {
+      const { username, password } = req.body ?? {};
       const user = typeof username === 'string' && await repository.findUserByUsername(username);
       if (!user || typeof password !== 'string' || !verifyPassword(password, user.passwordHash)) {
         throw new HttpError(401, 'Invalid credentials');
       }
+      req.securityUser = user;
       return { token: issue(user.id, 'pending'), state: 'pending', enrollmentRequired: !user.totpSecret };
     },
     async pending(req, res, next) {
