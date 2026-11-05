@@ -2,10 +2,12 @@
 
 A small Node.js security project using Express and PostgreSQL in Docker. It keeps
 Argon2id passwords, TOTP sign-in, document permissions, envelope encryption,
-parameterized filename search, security headers, and rate limiting.
+parameterized filename search, security headers, rate limiting, and document RLS.
 
 `postgres-before-Vault` preserves the excessive-privilege baseline. `main` and
 `postgres-Vault` use separate administration, application, and read-only accounts.
+`rls-before-Vault` preserves document SELECT access across organizations;
+`rls-Vault` and `main` add organization policies.
 
 ## Start
 
@@ -23,7 +25,7 @@ PostgreSQL is available on `127.0.0.1:5432`. Nothing installs PostgreSQL on the 
 
 Docker creates the schema, seeds encrypted demo data using the administration
 account, then starts the app using `vault_app`. Database initialization consists of
-three plain SQL files in `db/`. There are no migration tables or upgrade steps.
+plain SQL files in `db/`. There are no migration tables or upgrade steps.
 When changing database versions or privilege snapshots, rebuild from scratch:
 
 ```sh
@@ -72,7 +74,8 @@ The last two users demonstrate that equal passwords have different salted hashes
 Owners and workspace managers can read/manage within their own organization.
 READ, WRITE, and MANAGE grants permit reading; only MANAGE permits grant changes.
 Organization administrators have no automatic document access. Tenant/document
-authorization remains in the application; no PostgreSQL RLS is installed.
+permissions remain in the application. PostgreSQL RLS additionally restricts
+document rows to the authenticated user's organization.
 
 ## API
 
@@ -200,6 +203,51 @@ even when the test transaction sets organization 1. Explicitly requesting
 organization 2 also returns documents 3 and 4. SELECT permission alone does not
 filter rows by organization.
 
+Repeat on the secured snapshot:
+
+```sh
+git switch rls-Vault
+docker compose down -v
+docker compose up --build -d --wait
+docker compose exec app node scripts/prove-row-security.js
+```
+
+| Query context | Without RLS | With RLS |
+| --- | --- | --- |
+| No organization | Documents 1–4 | No rows |
+| Organization 1 (A) | Documents 1–4 | Documents 1–2 |
+| Organization 1, explicitly query organization 2 | Documents 3–4 | No rows |
+| Organization 2 (B) | Documents 1–4 | Documents 3–4 |
+
+The probe connects as `vault_readonly`, issues actual SELECT statements without
+application filters, and rolls back each transaction. It sets test contexts
+explicitly to demonstrate the policy. The app instead takes the organization
+from the database user associated with a verified bearer session. Query strings,
+headers, and JSON bodies cannot choose that context.
+
+Each protected operation checks out one connection, begins a transaction, and
+binds `set_config('vault.organization_id', organization, true)`. All its queries
+use that connection. Commit/rollback clears the transaction-local context.
+The `documents` policy compares its organization column with that context;
+an absent context returns no rows. App/read-only roles cannot bypass RLS.
+The administrator retains access for seeding. Startup still authenticates stored
+ciphertext in every organization. Existing per-document permission checks remain.
+
+For an interactive comparison, connect as `vault_readonly` using the demo password:
+
+```sh
+docker compose exec db psql -h 127.0.0.1 -U vault_readonly -d vault
+```
+
+```sql
+SELECT id, "organizationId", filename FROM documents ORDER BY id;
+BEGIN;
+SELECT set_config('vault.organization_id', '1', true);
+SELECT id, "organizationId", filename FROM documents ORDER BY id;
+SELECT id FROM documents WHERE "organizationId" = 2;
+ROLLBACK;
+```
+
 ## Development and tests
 
 For local Node execution with only PostgreSQL in Docker:
@@ -228,8 +276,11 @@ transactions, persistence, headers, and rate limiting.
 SQL operations, including permitted grant insertion/updating and rejected table,
 role, sensitive-column, deletion, and privilege-escalation operations.
 
-Verification passed all 46 tests. Fresh Docker startup and real HTTPS checks also
+Verification passed all 50 tests. Fresh Docker startup and real HTTPS checks also
 passed password/TOTP authentication, document decryption, tenant isolation,
 parameterized search, and permission insertion/updating under `vault_app`. The
 before/after role probes confirmed administrative SQL changes from ALLOWED to
 DENIED (`42501`) for the application account.
+Row-security tests also check both SELECT roles, missing context, pooled connection
+reuse, rollback, concurrent organizations, forged HTTP organization identifiers,
+and startup rejection of damaged ciphertext in other organizations.
