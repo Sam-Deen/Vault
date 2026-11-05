@@ -9,17 +9,17 @@ export class DocumentAuthorization {
     return Boolean(document && user.organizationId === document.organizationId);
   }
 
-  canRead(user, document) {
+  async canRead(user, document) {
     return this.sameOrganization(user, document) && (
       user.id === document.ownerId || user.role === 'WORKSPACE_MANAGER' ||
-      Boolean(this.repository.findPermission(document.id, user.id))
+      Boolean(await this.repository.findPermission(document.id, user.id))
     );
   }
 
-  requireManagement(user, document) {
+  async requireManagement(user, document) {
     const allowed = this.sameOrganization(user, document) && (
       user.id === document.ownerId || user.role === 'WORKSPACE_MANAGER' ||
-      this.repository.findPermission(document.id, user.id)?.permission === 'MANAGE'
+      (await this.repository.findPermission(document.id, user.id))?.permission === 'MANAGE'
     );
     if (!allowed) throw new HttpError(403, 'Document management permission required');
   }

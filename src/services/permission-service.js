@@ -6,16 +6,16 @@ export class PermissionService {
     this.authorization = authorization;
   }
 
-  list(user, documentId) {
-    const document = this.repository.findDocument(documentId);
-    this.authorization.requireManagement(user, document);
+  async list(user, documentId) {
+    const document = await this.repository.findDocument(documentId);
+    await this.authorization.requireManagement(user, document);
     return this.repository.listPermissions(documentId);
   }
 
-  update(user, documentId, { userId, permission }) {
-    const document = this.repository.findDocument(documentId);
-    this.authorization.requireManagement(user, document);
-    const target = this.repository.findUser(userId);
+  async update(user, documentId, { userId, permission }) {
+    const document = await this.repository.findDocument(documentId);
+    await this.authorization.requireManagement(user, document);
+    const target = await this.repository.findUser(userId);
     if (!target) throw new HttpError(404, 'Target user not found');
     if (!this.authorization.sameOrganization(target, document)) {
       throw new HttpError(400, 'Target user belongs to another organization');

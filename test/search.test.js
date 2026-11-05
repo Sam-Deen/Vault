@@ -35,7 +35,7 @@ test('SQL injection is treated as filename data and cannot bypass access predica
 });
 
 test('apostrophes and LIKE wildcards still work as ordinary filename searches', async () => {
-  fixture.db.prepare('UPDATE documents SET filename = ? WHERE id = 1').run("Alice's notes.txt");
+  await fixture.db.query('UPDATE documents SET filename = $1 WHERE id = 1', ["Alice's notes.txt"]);
   for (const filename of ["Alice's", '%', '_', '']) {
     assert.deepEqual((await fixture.request(search(filename))).body.map(document => document.id), [1]);
   }
@@ -46,9 +46,9 @@ test('search keeps tenant, owner, manager, and explicit read permission rules', 
     assert.deepEqual((await fixture.request(search(''), { user })).body.map(document => document.id), ids);
   }
   for (const permission of ['READ', 'WRITE', 'MANAGE']) {
-    fixture.repository.savePermission(2, 1, permission);
+    await fixture.repository.savePermission(2, 1, permission);
     assert.deepEqual((await fixture.request(search('bob'))).body.map(document => document.id), [2]);
   }
-  fixture.repository.savePermission(3, 1, 'MANAGE');
+  await fixture.repository.savePermission(3, 1, 'MANAGE');
   assert.deepEqual((await fixture.request(search('charlie'))).body, []);
 });

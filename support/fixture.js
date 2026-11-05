@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { createApp } from '../src/app.js';
-import { openDatabase } from '../src/database.js';
+import { createTestDatabase } from './postgres.js';
 import { VaultRepository } from '../src/repository.js';
 import { createHmac, randomBytes } from 'node:crypto';
 import { DocumentEncryption } from '../src/document-encryption.js';
@@ -23,9 +23,10 @@ export function totpCode(secret) {
 }
 
 export async function startFixture() {
-  const db = openDatabase(':memory:', testEncryption);
-  const repository = new VaultRepository(db, testEncryption);
-  const server = createApp(db, testEncryption).listen(0, '127.0.0.1');
+  const database = await createTestDatabase(testEncryption);
+  const db = database.owner;
+  const repository = new VaultRepository(database.runtime, testEncryption);
+  const server = createApp(database.runtime, testEncryption).listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   const tokens = new Map();
@@ -39,7 +40,7 @@ export async function startFixture() {
   async function login(user, password = `${user}-demo`) {
     const first = await raw('/api/auth/login', { method: 'POST', body: { username: user, password } });
     if (first.status !== 200) return first;
-    let secret = repository.findUserByUsername(user).totpSecret;
+    let secret = (await repository.findUserByUsername(user)).totpSecret;
     if (first.body.enrollmentRequired) {
       const enrollment = await raw('/api/auth/enroll', { method: 'POST', headers: { Authorization: `Bearer ${first.body.token}` } });
       secret = enrollment.body.secret;
@@ -49,7 +50,7 @@ export async function startFixture() {
     return verified;
   }
   return {
-    db, repository, raw, login, base,
+    db, repository, raw, login, base, databaseUrl: database.url,
     async request(path, { user = 'alice', password = `${user}-demo`, method = 'GET', body, headers = {} } = {}) {
       if (user && !tokens.has(user) && password === `${user}-demo`) await login(user, password);
       return raw(path, { method, body, headers: { ...(tokens.has(user) ? { Authorization: `Bearer ${tokens.get(user)}` } : {}), ...headers } });
@@ -59,7 +60,7 @@ export async function startFixture() {
         server.close(error => error ? reject(error) : resolve());
         server.closeAllConnections();
       });
-      db.close();
+      await database.close();
     },
   };
 }

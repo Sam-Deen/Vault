@@ -14,7 +14,7 @@ test('pending sessions cannot read or change documents before TOTP verification'
       ['GET', '/api/documents/1/permissions'],
       ['PUT', '/api/documents/1/permissions', { userId: 3, permission: 'MANAGE' }],
     ]) assert.equal((await fixture.raw(path, { method, body, headers })).status, 403);
-    assert.equal(fixture.repository.findPermission(1, 3), undefined);
+    assert.equal((await fixture.repository.findPermission(1, 3)), undefined);
 
     const enrollment = await fixture.raw('/api/auth/enroll', { method: 'POST', headers });
     assert.equal(enrollment.status, 200);

@@ -6,8 +6,8 @@ import { verifyPassword } from '../src/passwords.js';
 test('two seeded users with the same password have different stored Argon2id hashes and salts', async () => {
   const fixture = await startFixture();
   try {
-    const first = fixture.repository.findUserByUsername('hashAlice').passwordHash;
-    const second = fixture.repository.findUserByUsername('hashBob').passwordHash;
+    const first = (await fixture.repository.findUserByUsername('hashAlice')).passwordHash;
+    const second = (await fixture.repository.findUserByUsername('hashBob')).passwordHash;
     assert.notEqual(first, second);
     assert.notEqual(first.split('$')[4], second.split('$')[4]);
     for (const hash of [first, second]) {

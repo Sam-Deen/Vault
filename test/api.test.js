@@ -1,12 +1,10 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { startFixture, testEncryption } from '../support/fixture.js';
 import { openDatabase } from '../src/database.js';
 import { VaultRepository } from '../src/repository.js';
 import { verifyPassword } from '../src/passwords.js';
+import { seedDatabase } from '../src/seed.js';
 
 let fixture;
 beforeEach(async () => { fixture = await startFixture(); });
@@ -78,12 +76,12 @@ test('authorized grants and updates retain the same row and do not create duplic
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
   assert.deepEqual(second.body, { id: first.body.id, documentId: 2, userId: 1, permission: 'WRITE' });
-  assert.equal(fixture.repository.listPermissions(2).length, 2);
+  assert.equal((await fixture.repository.listPermissions(2)).length, 2);
   assert.deepEqual((await fixture.request('/api/documents')).body.map(document => document.id), [1, 2]);
 });
 
 test('owners and workspace managers do not need an explicit grant', async () => {
-  fixture.db.exec('DELETE FROM permissions WHERE documentId = 1');
+  await fixture.db.query('DELETE FROM permissions WHERE "documentId" = 1');
   for (const user of ['alice', 'bob']) {
     assert.equal((await fixture.request('/api/documents/1/permissions', { user })).status, 200);
     assert.equal((await fixture.request('/api/documents/1/permissions', { user, method: 'PUT', body: grant(3, 'READ') })).status, 200);
@@ -108,9 +106,9 @@ test('explicit MANAGE permits granting another same-organization user access', a
 
 test('requester and recipient organization boundaries reject writes without side effects', async () => {
   assert.equal((await fixture.request('/api/documents/3/permissions', { method: 'PUT', body: grant(4, 'READ') })).status, 403);
-  assert.equal(fixture.repository.findPermission(3, 4).permission, 'MANAGE');
+  assert.equal((await fixture.repository.findPermission(3, 4)).permission, 'MANAGE');
   assert.equal((await fixture.request(permissionPath, { user: 'bob', method: 'PUT', body: grant(4) })).status, 400);
-  assert.equal(fixture.repository.findPermission(2, 4), undefined);
+  assert.equal((await fixture.repository.findPermission(2, 4)), undefined);
   assert.equal((await fixture.request(permissionPath, { user: 'bob', method: 'PUT', body: grant(999) })).status, 404);
 });
 
@@ -123,7 +121,7 @@ test('invalid permission bodies return 400 without writing', async () => {
   ]) {
     const response = await fixture.request(permissionPath, { method: 'PUT', body });
     assert.equal(response.status, 400, JSON.stringify(body));
-    assert.equal(fixture.repository.findPermission(2, 1), undefined);
+    assert.equal((await fixture.repository.findPermission(2, 1)), undefined);
     assert.doesNotMatch(JSON.stringify(response.body), /SELECT|INSERT|SyntaxError|passwordHash/);
   }
 });
@@ -141,29 +139,20 @@ test('non-JSON PUT is rejected and malformed route IDs cannot reach SQL', async 
   assert.equal((await fixture.request('/api/documents/-1')).status, 404);
 });
 
-test('SQLite restart preserves grants and seed data without duplication', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'vault-test-'));
-  const path = join(directory, 'vault.sqlite');
-  let db;
+test('PostgreSQL reconnect and seeding preserve grants and encrypted data', async () => {
+  const saved = await fixture.repository.savePermission(2, 1, 'WRITE');
+  await fixture.repository.savePermission(1, 2, 'READ');
+  const storedPassword = (await fixture.repository.findUser(1)).passwordHash;
+  assert.equal(verifyPassword('alice-demo', storedPassword), true);
+  await seedDatabase(fixture.db, testEncryption);
+  const db = await openDatabase(fixture.databaseUrl, testEncryption);
   try {
-    db = openDatabase(path, testEncryption);
-    let repository = new VaultRepository(db, testEncryption);
-    const saved = repository.savePermission(2, 1, 'WRITE');
-    repository.savePermission(1, 2, 'READ');
-    const storedPassword = repository.findUser(1).passwordHash;
-    assert.notEqual(storedPassword, 'alice-demo');
-    assert.equal(verifyPassword('alice-demo', storedPassword), true);
-    db.close();
-    db = openDatabase(path, testEncryption);
-    repository = new VaultRepository(db, testEncryption);
-    assert.deepEqual(repository.findPermission(2, 1), saved);
-    assert.equal(repository.findPermission(1, 2).permission, 'READ');
-    assert.equal(repository.findUser(1).passwordHash, storedPassword);
+    const repository = new VaultRepository(db, testEncryption);
+    assert.deepEqual(await repository.findPermission(2, 1), saved);
+    assert.equal((await repository.findPermission(1, 2)).permission, 'READ');
+    assert.equal((await repository.findUser(1)).passwordHash, storedPassword);
     for (const [table, count] of [['organizations', 2], ['users', 7], ['documents', 4], ['permissions', 7]]) {
-      assert.equal(db.prepare(`SELECT count(*) AS count FROM ${table}`).get().count, count);
+      assert.equal((await db.query('SELECT count(*) AS count FROM ' + table)).rows[0].count, count);
     }
-  } finally {
-    db?.close();
-    rmSync(directory, { recursive: true, force: true });
-  }
+  } finally { await db.end(); }
 });

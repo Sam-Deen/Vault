@@ -13,7 +13,7 @@ const tls = {
   minVersion: 'TLSv1.3',
   maxVersion: 'TLSv1.3',
 };
-const db = openDatabase(process.env.DB_PATH);
+const db = await openDatabase();
 const server = createHttpsServer(tls, createApp(db)).listen(httpsPort, host, () => {
   console.log(`Vault listening on https://${host}:${httpsPort}`);
 });
@@ -33,6 +33,6 @@ const redirect = createHttpServer((req, res) => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, async () => {
     await Promise.all([server, redirect].map(listener => new Promise(resolve => listener.close(resolve))));
-    db.close();
+    await db.end();
   });
 }

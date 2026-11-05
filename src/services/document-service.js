@@ -7,18 +7,17 @@ export class DocumentService {
   }
 
   list(user) {
-    return this.repository.listDocuments(user.organizationId)
-      .filter(document => this.authorization.canRead(user, document));
+    return this.search(user, '');
   }
 
   search(user, filename) {
     return this.repository.searchDocuments(user, filename);
   }
 
-  get(user, id) {
-    const document = this.repository.findDocument(id);
-    if (!this.authorization.canRead(user, document)) throw new HttpError(404, 'Document not found');
-    return { ...document, content: this.repository.readDocumentContent(id) };
+  async get(user, id) {
+    const document = await this.repository.findDocument(id);
+    if (!await this.authorization.canRead(user, document)) throw new HttpError(404, 'Document not found');
+    return { ...document, content: await this.repository.readDocumentContent(id) };
   }
 }
 

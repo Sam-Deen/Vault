@@ -17,17 +17,29 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+  seed:
+    build: .
+    command: ["node", "scripts/seed.js"]
+    environment:
+      ADMIN_DATABASE_URL: postgresql://vault_admin:vault-admin-demo@db:5432/vault
+      DOCUMENT_MASTER_KEY: ${DOCUMENT_MASTER_KEY:?Run npm run keygen first}
+    depends_on:
+      db:
+        condition: service_healthy
   app:
     build: .
     environment:
       HTTPS_PORT: ${HTTPS_PORT:-8443}
       DOCUMENT_MASTER_KEY: ${DOCUMENT_MASTER_KEY:?Run npm run keygen first}
+      DATABASE_URL: postgresql://vault_app:vault-app-demo@db:5432/vault
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
     volumes:
-      - vault-data:/app/data
-      - ./certs:/app/certs:ro
+      - vault-certs:/app/certs
+    depends_on:
+      seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "require('node:https').get({hostname:'127.0.0.1',port:process.env.HTTPS_PORT,path:'/api/health',ca:require('node:fs').readFileSync('certs/localhost.pem')},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
       interval: 5s
@@ -35,4 +47,4 @@ services:
       retries: 10
 volumes:
   vault-postgres-data:
-  vault-data:
+  vault-certs:

@@ -29,27 +29,27 @@ export function createApp(db, encryption) {
   app.use(express.static('public'));
   app.get('/api/health', (req, res) => res.json({ status: 'UP' }));
   const json = express.json({ limit: '4kb' });
-  app.post('/api/auth/login', json, (req, res) => {
+  app.post('/api/auth/login', json, async (req, res) => {
     const { username, password } = req.body ?? {};
-    res.set('Cache-Control', 'no-store').json(authentication.login(username, password));
+    res.set('Cache-Control', 'no-store').json(await authentication.login(username, password));
   });
   app.post('/api/auth/enroll', authentication.pending, async (req, res) => {
     const user = req.auth.user;
     if (user.totpSecret) throw new HttpError(409, 'TOTP already enrolled');
     const secret = user.pendingTotpSecret ?? generateTotpSecret();
-    if (!user.pendingTotpSecret) repository.savePendingTotpSecret(user.id, secret);
+    if (!user.pendingTotpSecret) await repository.savePendingTotpSecret(user.id, secret);
     const uri = `otpauth://totp/Vault:${encodeURIComponent(user.username)}?secret=${secret}&issuer=Vault&algorithm=SHA1&digits=6&period=30`;
     res.set('Cache-Control', 'no-store').json({ secret, qrCode: await QRCode.toDataURL(uri) });
   });
-  app.post('/api/auth/verify', authentication.pending, json, (req, res) => {
+  app.post('/api/auth/verify', authentication.pending, json, async (req, res) => {
     const user = req.auth.user;
     const secret = user.totpSecret ?? user.pendingTotpSecret;
     if (!secret || !verifyTotp(secret, req.body?.code)) throw new HttpError(401, 'Invalid TOTP code');
-    if (!user.totpSecret) repository.activateTotpSecret(user.id);
+    if (!user.totpSecret) await repository.activateTotpSecret(user.id);
     res.set('Cache-Control', 'no-store').json(authentication.complete(req));
   });
-  app.post('/api/auth/logout', (req, res) => {
-    authentication.logout(req);
+  app.post('/api/auth/logout', async (req, res) => {
+    await authentication.logout(req);
     res.status(204).end();
   });
   app.use(authentication.protected);
@@ -60,21 +60,21 @@ export function createApp(db, encryption) {
     req.documentId = Number(value);
     next();
   });
-  app.get('/api/documents', (req, res) => res.json(documents.list(req.user)));
-  app.get('/api/documents/search', (req, res) => res.json(documents.search(req.user, String(req.query.filename ?? ''))));
-  app.get('/api/documents/:id', (req, res) => res.json(documents.get(req.user, req.documentId)));
-  app.get('/api/documents/:id/permissions', (req, res) => {
-    res.json(permissions.list(req.user, req.documentId));
+  app.get('/api/documents', async (req, res) => res.json(await documents.list(req.user)));
+  app.get('/api/documents/search', async (req, res) => res.json(await documents.search(req.user, String(req.query.filename ?? ''))));
+  app.get('/api/documents/:id', async (req, res) => res.json(await documents.get(req.user, req.documentId)));
+  app.get('/api/documents/:id/permissions', async (req, res) => {
+    res.json(await permissions.list(req.user, req.documentId));
   });
   app.put('/api/documents/:id/permissions', (req, res, next) => {
     if (!req.is('application/json')) return next(new HttpError(415, 'Content-Type must be application/json'));
     next();
-  }, express.json(), (req, res) => {
+  }, express.json(), async (req, res) => {
     const { userId, permission } = req.body ?? {};
     if (!Number.isSafeInteger(userId) || userId <= 0 || !['READ', 'WRITE', 'MANAGE'].includes(permission)) {
       throw new HttpError(400, 'A positive userId and READ, WRITE or MANAGE permission are required');
     }
-    res.json(permissions.update(req.user, req.documentId, { userId, permission }));
+    res.json(await permissions.update(req.user, req.documentId, { userId, permission }));
   });
   app.use((req, res, next) => next(new HttpError(404, 'Not found')));
   app.use((error, req, res, next) => {

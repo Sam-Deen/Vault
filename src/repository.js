@@ -6,79 +6,78 @@ export class VaultRepository {
     this.encryption = encryption;
   }
 
-  findUserByUsername(username) {
-    return this.db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  async findUserByUsername(username) {
+    return (await this.db.query('SELECT * FROM users WHERE username = $1', [username])).rows[0];
   }
 
-  findUser(id) {
-    return this.db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  async findUser(id) {
+    return (await this.db.query('SELECT * FROM users WHERE id = $1', [id])).rows[0];
   }
 
-  savePendingTotpSecret(id, secret) {
-    this.db.prepare('UPDATE users SET pendingTotpSecret = ? WHERE id = ?').run(secret, id);
+  async savePendingTotpSecret(id, secret) {
+    await this.db.query('UPDATE users SET "pendingTotpSecret" = $1 WHERE id = $2', [secret, id]);
   }
 
-  activateTotpSecret(id) {
-    this.db.prepare('UPDATE users SET totpSecret = pendingTotpSecret, pendingTotpSecret = NULL WHERE id = ?').run(id);
+  async activateTotpSecret(id) {
+    await this.db.query('UPDATE users SET "totpSecret" = "pendingTotpSecret", "pendingTotpSecret" = NULL WHERE id = $1', [id]);
   }
 
-  findDocument(id) {
-    return this.db.prepare('SELECT id, organizationId, ownerId, filename, createdAt FROM documents WHERE id = ?').get(id);
+  async findDocument(id) {
+    return (await this.db.query('SELECT id, "organizationId", "ownerId", filename, "createdAt" FROM documents WHERE id = $1', [id])).rows[0];
   }
 
-  listDocuments(organizationId) {
-    return this.db.prepare('SELECT id, organizationId, ownerId, filename, createdAt FROM documents WHERE organizationId = ? ORDER BY id').all(organizationId);
+  async searchDocuments(user, filename) {
+    return (await this.db.query(`
+      SELECT id, "organizationId", "ownerId", filename, "createdAt" FROM documents d
+      WHERE "organizationId" = $1 AND ("ownerId" = $2 OR $3 = 'WORKSPACE_MANAGER'
+        OR EXISTS (SELECT 1 FROM permissions p WHERE p."documentId" = d.id AND p."userId" = $2))
+        AND filename ILIKE $4 ESCAPE '' ORDER BY id
+    `, [user.organizationId, user.id, user.role, `%${filename}%`])).rows;
   }
 
-  searchDocuments(user, filename) {
-    return this.db.prepare(`
-      SELECT id, organizationId, ownerId, filename, createdAt FROM documents d
-      WHERE organizationId = ? AND (ownerId = ? OR ? = 'WORKSPACE_MANAGER'
-        OR EXISTS (SELECT 1 FROM permissions p WHERE p.documentId = d.id AND p.userId = ?))
-        AND filename LIKE ? ORDER BY id
-    `).all(user.organizationId, user.id, user.role, user.id, `%${filename}%`);
+  async readDocumentContent(id) {
+    const document = (await this.db.query(`
+      SELECT d.*, k."wrappedKey", k.iv AS "keyIv", k."authTag" AS "keyAuthTag"
+      FROM documents d JOIN document_keys k ON k."documentId" = d.id AND k.version = d.version
+      WHERE d.id = $1
+    `, [id])).rows[0];
+    return this.encryption.decrypt(document, document && { wrappedKey: document.wrappedKey, iv: document.keyIv, authTag: document.keyAuthTag });
   }
 
-  readDocumentContent(id) {
-    const document = this.db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
-    const key = this.db.prepare('SELECT * FROM document_keys WHERE documentId = ? AND version = ?').get(id, document.version);
-    return this.encryption.decrypt(document, key);
-  }
-
-  // This MVP retains only the current version; replacing content rotates its key.
-  saveDocumentVersion(id, content) {
-    this.db.exec('SAVEPOINT document_version');
+  // Only the current version is retained; administrative setup/tests can replace it.
+  async saveDocumentVersion(id, content) {
+    const client = await this.db.connect();
     try {
-      const document = this.db.prepare('SELECT id, organizationId, version FROM documents WHERE id = ?').get(id);
-      if (!document) throw new Error('Document not found');
+      await client.query('BEGIN');
+      const document = (await client.query('SELECT id, "organizationId", version FROM documents WHERE id = $1 FOR UPDATE', [id])).rows[0];
       const version = document.version + 1;
       const encrypted = this.encryption.encrypt(content, { ...document, version });
-      this.db.prepare('UPDATE documents SET content = ?, version = ?, iv = ?, authTag = ? WHERE id = ?')
-        .run(encrypted.content, version, encrypted.iv, encrypted.authTag, id);
-      this.db.prepare('INSERT INTO document_keys (documentId, version, wrappedKey, iv, authTag) VALUES (?, ?, ?, ?, ?)')
-        .run(id, version, encrypted.wrappedKey, encrypted.keyIv, encrypted.keyAuthTag);
-      this.db.prepare('DELETE FROM document_keys WHERE documentId = ? AND version <> ?').run(id, version);
-      this.db.exec('RELEASE document_version');
+      await client.query('UPDATE documents SET content = $1, version = $2, iv = $3, "authTag" = $4 WHERE id = $5', [encrypted.content, version, encrypted.iv, encrypted.authTag, id]);
+      await client.query('DELETE FROM document_keys WHERE "documentId" = $1', [id]);
+      await client.query('INSERT INTO document_keys VALUES ($1, $2, $3, $4, $5)', [id, version, encrypted.wrappedKey, encrypted.keyIv, encrypted.keyAuthTag]);
+      await client.query('COMMIT');
       return version;
     } catch (error) {
-      this.db.exec('ROLLBACK TO document_version; RELEASE document_version');
+      await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  findPermission(documentId, userId) {
-    return this.db.prepare('SELECT * FROM permissions WHERE documentId = ? AND userId = ?').get(documentId, userId);
+  async findPermission(documentId, userId) {
+    return (await this.db.query('SELECT * FROM permissions WHERE "documentId" = $1 AND "userId" = $2', [documentId, userId])).rows[0];
   }
 
-  listPermissions(documentId) {
-    return this.db.prepare('SELECT * FROM permissions WHERE documentId = ? ORDER BY userId').all(documentId);
+  async listPermissions(documentId) {
+    return (await this.db.query('SELECT * FROM permissions WHERE "documentId" = $1 ORDER BY "userId"', [documentId])).rows;
   }
 
-  savePermission(documentId, userId, permission) {
-    return this.db.prepare(`
-      INSERT INTO permissions (documentId, userId, permission) VALUES (?, ?, ?)
-      ON CONFLICT (documentId, userId) DO UPDATE SET permission = excluded.permission
-      RETURNING id, documentId, userId, permission
-    `).get(documentId, userId, permission);
+  async savePermission(documentId, userId, permission) {
+    return (await this.db.query(`
+      INSERT INTO permissions ("documentId", "userId", permission) VALUES ($1, $2, $3)
+      ON CONFLICT ("documentId", "userId") DO UPDATE SET permission = excluded.permission
+      RETURNING id, "documentId", "userId", permission
+    `, [documentId, userId, permission])).rows[0];
   }
 }
