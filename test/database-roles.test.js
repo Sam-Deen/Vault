@@ -34,8 +34,8 @@ test('the application account has only the SQL permissions needed by its routes'
   try {
     const db = database.runtime;
     assert.equal((await db.query('SELECT current_user')).rows[0].current_user, 'vault_app');
-    const attributes = (await db.query('SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication FROM pg_roles WHERE rolname = current_user')).rows[0];
-    assert.deepEqual(Object.values(attributes), [false, false, false, false]);
+    const attributes = (await db.query('SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = current_user')).rows[0];
+    assert.deepEqual(Object.values(attributes), [false, false, false, false, false]);
     assert.equal((await db.query('SELECT count(*) AS n FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user)')).rows[0].n, 0);
     for (const sql of [
       'SELECT * FROM documents',
@@ -75,11 +75,11 @@ test('the read-only account can read business records but cannot mutate them or 
   } finally { await db.end(); await database.close(); }
 });
 
-test('the rebuilt schema contains only business tables and no row-security policies', async () => {
+test('the rebuilt schema keeps business tables and enforces one document row-security policy', async () => {
   const database = await createTestDatabase(testEncryption);
   try {
     assert.deepEqual((await database.owner.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).rows.map(row => row.tablename), ['document_keys', 'documents', 'organizations', 'permissions', 'users']);
-    assert.equal((await database.owner.query("SELECT * FROM pg_policies WHERE schemaname = 'public'")).rowCount, 0);
-    assert.equal((await database.owner.query("SELECT * FROM pg_class WHERE relnamespace = 'public'::regnamespace AND (relrowsecurity OR relforcerowsecurity)")).rowCount, 0);
+    assert.deepEqual((await database.owner.query("SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public'")).rows, [{ tablename: 'documents', policyname: 'document_organization' }]);
+    assert.deepEqual((await database.owner.query("SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnamespace = 'public'::regnamespace AND (relrowsecurity OR relforcerowsecurity)")).rows, [{ relname: 'documents', relrowsecurity: true, relforcerowsecurity: true }]);
   } finally { await database.close(); }
 });
