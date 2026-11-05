@@ -4,8 +4,8 @@ A small Node.js security project using Express and PostgreSQL in Docker. It keep
 Argon2id passwords, TOTP sign-in, document permissions, envelope encryption,
 parameterized filename search, security headers, and rate limiting.
 
-This PostgreSQL baseline deliberately gives `vault_app` superuser privileges.
-`postgres-before-Vault` preserves it for the database privilege experiment.
+`postgres-before-Vault` preserves the excessive-privilege baseline. `main` and
+`postgres-Vault` use separate administration, application, and read-only accounts.
 
 ## Start
 
@@ -127,10 +127,17 @@ requests; set its `baseUrl` and Alice's verified `token`.
 
 ## Database privilege experiment
 
-| Account | Password | Baseline access |
+| Account | Password | Secured access |
 | --- | --- | --- |
 | vault_admin | vault-admin-demo | Database administrator |
-| vault_app | vault-app-demo | Excessive SUPERUSER access |
+| vault_app | vault-app-demo | Read authentication/documents/keys/grants; update TOTP fields; insert/update grants |
+| vault_readonly | vault-readonly-demo | Read organizations, encrypted documents, and grants |
+
+The application account owns no tables and cannot create tables (including temporary
+tables), schemas, databases, or roles. It cannot change role privileges, change
+password/role columns, modify document/key records, or delete records. The read-only
+account cannot write or read authentication records/wrapped keys. Administration
+and seeding use `vault_admin`; the app receives only its own database connection.
 
 Show the consequences using actual SQL queries:
 
@@ -142,6 +149,34 @@ The script connects as each account and tests document reads, TOTP updates, tabl
 creation, temporary table creation, role creation/changes, and deleting unrelated
 records. Each statement runs inside BEGIN/ROLLBACK, preserving the data. On this
 baseline all operations succeed for `vault_app`, demonstrating its excessive access.
+On the secured snapshot, application reads/TOTP updates succeed while the five
+administrative operations return `DENIED (42501)`. Read-only document reads succeed;
+its writes and administrative operations return `DENIED (42501)`.
+
+For a before/after comparison, stop and rebuild the database on each snapshot:
+
+```sh
+git switch postgres-before-Vault
+docker compose down -v
+docker compose up --build -d --wait
+docker compose run --rm seed node scripts/prove-database-roles.js
+```
+
+```sh
+git switch postgres-Vault
+docker compose down -v
+docker compose up --build -d --wait
+docker compose run --rm seed node scripts/prove-database-roles.js
+```
+
+Example denied statements as `vault_app`:
+
+```sql
+CREATE TABLE privilege_probe (id integer);
+CREATE ROLE extra_user;
+ALTER ROLE vault_app SUPERUSER;
+DELETE FROM organizations WHERE id = -1;
+```
 
 For interactive SQL, connect through TCP and enter the account password:
 
@@ -173,3 +208,12 @@ Tests create and drop randomly named disposable PostgreSQL databases. They do no
 reset the demo database. `TEST_ADMIN_DATABASE_URL` can select another test server.
 Tests cover auth/TOTP, authorization, grants, search injection, encryption, version
 transactions, persistence, headers, and rate limiting.
+`node --test test/database-roles.test.js` checks the three accounts against real
+SQL operations, including permitted grant insertion/updating and rejected table,
+role, sensitive-column, deletion, and privilege-escalation operations.
+
+Verification passed all 46 tests. Fresh Docker startup and real HTTPS checks also
+passed password/TOTP authentication, document decryption, tenant isolation,
+parameterized search, and permission insertion/updating under `vault_app`. The
+before/after role probes confirmed administrative SQL changes from ALLOWED to
+DENIED (`42501`) for the application account.
