@@ -15,6 +15,7 @@
     "proof:rls": "node --env-file-if-exists=.env scripts/prove-row-security.js",
     "proof:documents": "node --env-file-if-exists=.env scripts/prove-document-storage.js",
     "monitor": "node --env-file-if-exists=.env scripts/monitor-security.js",
+    "monitor:demo": "node scripts/generate-monitoring-events.js",
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
     "test": "node --test"
