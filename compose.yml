@@ -1,5 +1,22 @@
 name: vault
 services:
+  db:
+    build:
+      context: .
+      dockerfile: db/Dockerfile
+    environment:
+      POSTGRES_DB: vault
+      POSTGRES_USER: vault_admin
+      POSTGRES_PASSWORD: vault-admin-demo
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - vault-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault_admin -d vault"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
   app:
     build: .
     environment:
@@ -17,4 +34,5 @@ services:
       timeout: 3s
       retries: 10
 volumes:
+  vault-postgres-data:
   vault-data:
