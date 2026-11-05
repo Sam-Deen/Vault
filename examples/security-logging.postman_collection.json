@@ -1,0 +1,413 @@
+{
+  "info": {
+    "name": "Vault security logging",
+    "description": "Run on a fresh demo database. Enrolls Alice and triggers security events. Runtime tokens and TOTP secret stay in run variables.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://127.0.0.1:8443"
+    },
+    {
+      "key": "totpSecret",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "exec": [
+          "const id = pm.response.headers.get('X-Request-Id');",
+          "pm.test('Server supplies a unique request ID', () => {",
+          "  pm.expect(id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);",
+          "  const seen = JSON.parse(pm.collectionVariables.get('requestIds') || '[]');",
+          "  pm.expect(seen).not.to.include(id);",
+          "  seen.push(id);",
+          "  pm.collectionVariables.set('requestIds', JSON.stringify(seen));",
+          "});",
+          "console.log(pm.info.requestName + ': HTTP ' + pm.response.code + ', requestId=' + id);"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Alice password login",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/login",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\":\"alice\",\"password\":\"alice-demo\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.collectionVariables.set('requestIds', '[]');",
+              "pm.collectionVariables.set('rateAttempts', 0);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));",
+              "const result = pm.response.json();",
+              "pm.collectionVariables.set('pendingToken', result.token);",
+              "pm.collectionVariables.set('enrollmentRequired', result.enrollmentRequired);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enroll Alice TOTP",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/enroll",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{pendingToken}}"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "if (!pm.collectionVariables.get('enrollmentRequired')) pm.execution.skipRequest();"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('totpSecret', pm.response.json().secret);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Complete Alice authentication",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/verify",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{pendingToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"code\":\"{{totpCode}}\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const secret = pm.variables.get('totpSecret');",
+              "const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';",
+              "let bits = 0, value = 0;",
+              "const bytes = [];",
+              "for (const char of secret) {",
+              "  value = (value << 5) | alphabet.indexOf(char);",
+              "  bits += 5;",
+              "  if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 255); bits -= 8; }",
+              "}",
+              "const counter = new Uint8Array(8);",
+              "new DataView(counter.buffer).setUint32(4, Math.floor(Date.now() / 30000));",
+              "const key = await crypto.subtle.importKey('raw', new Uint8Array(bytes), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);",
+              "const hash = new Uint8Array(await crypto.subtle.sign('HMAC', key, counter));",
+              "const offset = hash[19] & 15;",
+              "const number = new DataView(hash.buffer).getUint32(offset) & 0x7fffffff;",
+              "pm.variables.set('totpCode', String(number % 1000000).padStart(6, '0'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('token', pm.response.json().token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Incorrect Alice password",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/login",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\":\"alice\",\"password\":\"incorrect-password\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Start another pending login",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/login",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\":\"alice\",\"password\":\"alice-demo\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('pendingToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invalid TOTP code",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/auth/verify",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{pendingToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"code\":\"invalid-code\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Read Alice document",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/documents/1",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Original document contents are returned', () => pm.expect(pm.response.json().content).to.eql(\"Alice's private notes from Organization A.\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Denied Organization B document",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/documents/3",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 404', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Denied permission modification",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/api/documents/2/permissions",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"userId\":1,\"permission\":\"MANAGE\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 403', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Allowed permission modification",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/api/documents/1/permissions",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"userId\":6,\"permission\":\"READ\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Expected HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Exceed API rate limit",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/health",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const attempts = Number(pm.collectionVariables.get('rateAttempts') || 0) + 1;",
+              "pm.collectionVariables.set('rateAttempts', attempts);",
+              "pm.test('Health request succeeds or is rate limited', () => pm.expect(pm.response.code).to.be.oneOf([200, 429]));",
+              "if (pm.response.code === 200 && attempts < 31) pm.execution.setNextRequest(pm.info.requestName);",
+              "else pm.test('Rate limit reached', () => pm.response.to.have.status(429));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

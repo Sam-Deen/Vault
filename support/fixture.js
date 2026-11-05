@@ -22,11 +22,11 @@ export function totpCode(secret) {
   return String((hash.readUInt32BE(hash[19] & 15) & 0x7fffffff) % 1000000).padStart(6, '0');
 }
 
-export async function startFixture() {
+export async function startFixture({ logger = { write() {} } } = {}) {
   const database = await createTestDatabase(testEncryption);
   const db = database.owner;
   const repository = new VaultRepository(database.runtime, testEncryption);
-  const server = createApp(database.runtime, testEncryption).listen(0, '127.0.0.1');
+  const server = createApp(database.runtime, testEncryption, logger).listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   const tokens = new Map();
