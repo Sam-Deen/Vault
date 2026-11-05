@@ -184,6 +184,22 @@ For interactive SQL, connect through TCP and enter the account password:
 docker compose exec db psql -h 127.0.0.1 -U vault_app -d vault
 ```
 
+## Row security experiment
+
+Run the same read-only SQL probe on each snapshot after rebuilding the database:
+
+```sh
+git switch rls-before-Vault
+docker compose down -v
+docker compose up --build -d --wait
+docker compose exec app node scripts/prove-row-security.js
+```
+
+Without RLS, `vault_readonly` reads documents 1–4 across organizations A and B,
+even when the test transaction sets organization 1. Explicitly requesting
+organization 2 also returns documents 3 and 4. SELECT permission alone does not
+filter rows by organization.
+
 ## Development and tests
 
 For local Node execution with only PostgreSQL in Docker:
