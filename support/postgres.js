@@ -21,6 +21,7 @@ export async function createTestDatabase(encryption) {
   try {
     await owner.query(readFileSync(new URL('../db/02-schema.sql', import.meta.url), 'utf8'));
     await owner.query(readFileSync(new URL('../db/03-access.sql', import.meta.url), 'utf8').replaceAll(':"DBNAME"', name));
+    await owner.query(readFileSync(new URL('../db/04-row-security.sql', import.meta.url), 'utf8'));
     await seedDatabase(owner, encryption);
     const url = new URL(ownerUrl);
     url.username = 'vault_app';

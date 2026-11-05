@@ -10,14 +10,20 @@ import { HttpError } from './http-error.js';
 import { DocumentAuthorization } from './services/document-authorization.js';
 import { DocumentService } from './services/document-service.js';
 import { PermissionService } from './services/permission-service.js';
+import { withOrganization } from './organization-context.js';
 
 export function createApp(db, encryption) {
   const app = express();
   const repository = new VaultRepository(db, encryption);
-  const authorization = new DocumentAuthorization(repository);
-  const documents = new DocumentService(repository, authorization);
-  const permissions = new PermissionService(repository, authorization);
   const authentication = createAuthentication(repository);
+  const forUser = (user, action) => withOrganization(db, user.organizationId, client => {
+    const scopedRepository = new VaultRepository(client, encryption);
+    const authorization = new DocumentAuthorization(scopedRepository);
+    return action({
+      documents: new DocumentService(scopedRepository, authorization),
+      permissions: new PermissionService(scopedRepository, authorization),
+    });
+  });
   app.use(helmet());
   app.use('/api', rateLimit({
     windowMs: 60_000,
@@ -60,11 +66,11 @@ export function createApp(db, encryption) {
     req.documentId = Number(value);
     next();
   });
-  app.get('/api/documents', async (req, res) => res.json(await documents.list(req.user)));
-  app.get('/api/documents/search', async (req, res) => res.json(await documents.search(req.user, String(req.query.filename ?? ''))));
-  app.get('/api/documents/:id', async (req, res) => res.json(await documents.get(req.user, req.documentId)));
+  app.get('/api/documents', async (req, res) => res.json(await forUser(req.user, ({ documents }) => documents.list(req.user))));
+  app.get('/api/documents/search', async (req, res) => res.json(await forUser(req.user, ({ documents }) => documents.search(req.user, String(req.query.filename ?? '')))));
+  app.get('/api/documents/:id', async (req, res) => res.json(await forUser(req.user, ({ documents }) => documents.get(req.user, req.documentId))));
   app.get('/api/documents/:id/permissions', async (req, res) => {
-    res.json(await permissions.list(req.user, req.documentId));
+    res.json(await forUser(req.user, ({ permissions }) => permissions.list(req.user, req.documentId)));
   });
   app.put('/api/documents/:id/permissions', (req, res, next) => {
     if (!req.is('application/json')) return next(new HttpError(415, 'Content-Type must be application/json'));
@@ -74,7 +80,7 @@ export function createApp(db, encryption) {
     if (!Number.isSafeInteger(userId) || userId <= 0 || !['READ', 'WRITE', 'MANAGE'].includes(permission)) {
       throw new HttpError(400, 'A positive userId and READ, WRITE or MANAGE permission are required');
     }
-    res.json(await permissions.update(req.user, req.documentId, { userId, permission }));
+    res.json(await forUser(req.user, ({ permissions }) => permissions.update(req.user, req.documentId, { userId, permission })));
   });
   app.use((req, res, next) => next(new HttpError(404, 'Not found')));
   app.use((error, req, res, next) => {
